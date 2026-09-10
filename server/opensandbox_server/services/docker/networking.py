@@ -65,8 +65,8 @@ logger = logging.getLogger(__name__)
 
 
 def _running_inside_docker_container() -> bool:
-    """Return True if the current process is running inside a Docker container."""
-    return os.path.exists("/.dockerenv")
+    """Return True if the current process is running inside a Docker or Podman container."""
+    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
 
 def _docker_error_indicates_unsupported_ipv6_sysctls(exc: DockerException) -> bool:

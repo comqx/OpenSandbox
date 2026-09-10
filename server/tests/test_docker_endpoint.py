@@ -24,6 +24,29 @@ from opensandbox_server.services.constants import (
 from opensandbox_server.services.docker import DockerSandboxService
 from opensandbox_server.config import AppConfig, RuntimeConfig, DockerConfig, ServerConfig
 
+
+@pytest.mark.parametrize(
+    ("container_markers", "expected_host"),
+    [
+        ({"/.dockerenv"}, "10.57.1.91"),
+        ({"/run/.containerenv"}, "10.57.1.91"),
+        (set(), "127.0.0.1"),
+    ],
+    ids=["docker", "podman", "host"],
+)
+def test_resolve_proxy_host_detects_supported_container_markers(
+    mock_docker_service, container_markers, expected_host
+):
+    service, _ = mock_docker_service
+    service.app_config.docker.host_ip = "10.57.1.91"
+
+    with patch(
+        "opensandbox_server.services.docker.networking.os.path.exists",
+        side_effect=lambda path: path in container_markers,
+    ):
+        assert service._resolve_proxy_host() == expected_host
+
+
 @pytest.fixture
 def mock_docker_service():
     """Create a DockerSandboxService with mocked docker client."""
