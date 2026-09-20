@@ -44,7 +44,23 @@ COPY LICENSE README.md ./
 # Install the project itself into the venv (deps already synced)
 RUN uv pip install --no-deps --editable .
 
-FROM python:3.10-slim AS runtime
+# Pin bookworm: python:3.10-slim may track Debian trixie whose apt mirrors are
+# still unstable; bookworm keeps runtime curl install reliable.
+FROM python:3.10-slim-bookworm AS runtime
+
+ARG APT_MIRROR=mirrors.aliyun.com
+RUN set -eux; \
+    if [ -n "${APT_MIRROR}" ]; then \
+      if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+      fi; \
+      if [ -f /etc/apt/sources.list ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+      fi; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends curl ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
