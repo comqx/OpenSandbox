@@ -19,6 +19,7 @@ from opensandbox_server.constants import OPENSANDBOX_LIFECYCLE
 RESERVED_LABEL_PREFIX = "opensandbox.io/"
 
 SANDBOX_ID_LABEL = "opensandbox.io/id"
+SANDBOX_TENANT_LABEL = "opensandbox.io/tenant"
 SANDBOX_EXPIRES_AT_LABEL = "opensandbox.io/expires-at"
 SANDBOX_MANUAL_CLEANUP_LABEL = "opensandbox.io/manual-cleanup"
 SANDBOX_PLATFORM_OS_LABEL = "opensandbox.io/platform-os"
@@ -178,6 +179,7 @@ class SnapshotErrorCodes:
 __all__ = [
     "RESERVED_LABEL_PREFIX",
     "SANDBOX_ID_LABEL",
+    "SANDBOX_TENANT_LABEL",
     "SANDBOX_EXPIRES_AT_LABEL",
     "SANDBOX_MANUAL_CLEANUP_LABEL",
     "SANDBOX_PLATFORM_OS_LABEL",

@@ -139,6 +139,7 @@ If `runtime.type = "kubernetes"` and the `[kubernetes]` table is absent, the ser
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `kubeconfig_path` | string \| omitted | `null` | Path to kubeconfig (expandable, e.g. `~/.kube/config`). In-cluster configs often leave this unset and rely on in-cluster credentials. |
+| `insecure_skip_tls_verify` | boolean | `false` | Skip TLS verification for the Kubernetes API server. Temporary workaround only when in-cluster ServiceAccount CA does not match the apiserver certificate; disable once cluster CA is fixed. |
 | `namespace` | string \| omitted | `null` | Namespace for sandbox workloads. |
 | `workload_provider` | string \| omitted | `null` | One of: **`batchsandbox`**, **`agent-sandbox`**. If omitted, the **first registered** provider is used (currently **`batchsandbox`**). |
 | `batchsandbox_template_file` | string \| omitted | `null` | Path to **BatchSandbox** CR YAML template when `workload_provider = "batchsandbox"`. |

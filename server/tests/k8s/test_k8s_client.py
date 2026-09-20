@@ -45,6 +45,22 @@ class TestK8sClient:
             assert client.config == config
             mock_load.assert_called_once()
 
+    def test_insecure_skip_tls_verify_disables_certificate_validation(self):
+        """Verify optional TLS verification bypass is applied to the default config."""
+        runtime_config = KubernetesRuntimeConfig(
+            kubeconfig_path=None,
+            insecure_skip_tls_verify=True,
+        )
+        default_cfg = MagicMock()
+
+        with patch('kubernetes.config.load_incluster_config'), \
+             patch('kubernetes.client.Configuration.get_default_copy', return_value=default_cfg), \
+             patch('kubernetes.client.Configuration.set_default') as mock_set_default:
+            K8sClient(runtime_config)
+
+            assert default_cfg.verify_ssl is False
+            mock_set_default.assert_called_once_with(default_cfg)
+
     def test_init_with_invalid_kubeconfig_raises_exception(self):
         config = KubernetesRuntimeConfig(
             kubeconfig_path="/invalid/path",

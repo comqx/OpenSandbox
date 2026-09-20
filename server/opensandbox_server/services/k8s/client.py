@@ -75,6 +75,14 @@ class K8sClient:
                 config.load_kube_config(config_file=self.config.kubeconfig_path)
             else:
                 config.load_incluster_config()
+            if self.config.insecure_skip_tls_verify:
+                logger.warning(
+                    "kubernetes.insecure_skip_tls_verify is enabled; TLS certificate "
+                    "verification for the Kubernetes API server is disabled"
+                )
+                cfg = client.Configuration.get_default_copy()
+                cfg.verify_ssl = False
+                client.Configuration.set_default(cfg)
         except Exception as e:
             raise Exception(f"Failed to load Kubernetes configuration: {e}") from e
 

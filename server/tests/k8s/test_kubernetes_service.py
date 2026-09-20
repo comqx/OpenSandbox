@@ -2668,3 +2668,118 @@ class TestPatchSandboxMetadata:
         assert sandbox.metadata == {"env": "stage"}
         # Pre-patch read only; no second get_workload after patch_labels.
         assert k8s_service.workload_provider.get_workload.call_count == 1
+
+
+class TestSharedNamespaceTenantIsolation:
+    """Same-namespace tenants must only see sandboxes stamped with their name."""
+
+    def _as_tenant(self, name: str):
+        from opensandbox_server.tenants.context import get_current_tenant, set_current_tenant
+        from opensandbox_server.tenants.models import TenantEntry
+
+        previous = get_current_tenant()
+        set_current_tenant(TenantEntry(name=name, namespace="opensandbox-system", api_keys=("k",)))
+        return previous
+
+    def _clear_tenant(self, previous) -> None:
+        from opensandbox_server.tenants.context import set_current_tenant
+
+        set_current_tenant(previous)
+
+    def _labeled_workload(self, mock_workload, sandbox_id: str, tenant: str | None):
+        from copy import deepcopy
+
+        workload = deepcopy(mock_workload)
+        workload["metadata"]["name"] = sandbox_id
+        workload["metadata"]["labels"] = {"opensandbox.io/id": sandbox_id}
+        if tenant is not None:
+            workload["metadata"]["labels"]["opensandbox.io/tenant"] = tenant
+        return workload
+
+    def _stub_list_status(self, k8s_service) -> None:
+        k8s_service.workload_provider.get_status.return_value = {
+            "state": "Running",
+            "reason": "",
+            "message": "Running",
+            "last_transition_at": datetime.now(timezone.utc),
+        }
+        k8s_service.workload_provider.get_endpoint_info.return_value = "10.0.0.1:8080"
+        k8s_service.workload_provider.get_expiration.return_value = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    @pytest.mark.asyncio
+    async def test_create_stamps_tenant_label(
+        self, k8s_service, create_sandbox_request, mock_workload
+    ):
+        previous = self._as_tenant("gdds")
+        try:
+            k8s_service.workload_provider.create_workload.return_value = {
+                "name": "test-sandbox-123",
+                "uid": "abc-123",
+            }
+            k8s_service.workload_provider.get_workload.return_value = mock_workload
+            self._stub_list_status(k8s_service)
+
+            await k8s_service.create_sandbox(create_sandbox_request)
+
+            labels = k8s_service.workload_provider.create_workload.call_args.kwargs["labels"]
+            assert labels["opensandbox.io/tenant"] == "gdds"
+        finally:
+            self._clear_tenant(previous)
+
+    def test_list_hides_other_tenant_keeps_own_and_legacy(
+        self, k8s_service, mock_workload
+    ):
+        own = self._labeled_workload(mock_workload, "own-id", "gdds")
+        other = self._labeled_workload(mock_workload, "other-id", "geip")
+        legacy = self._labeled_workload(mock_workload, "legacy-id", None)
+        k8s_service.workload_provider.list_workloads.return_value = [own, other, legacy]
+        self._stub_list_status(k8s_service)
+
+        previous = self._as_tenant("gdds")
+        try:
+            from opensandbox_server.api.schema import PaginationRequest
+
+            response = k8s_service.list_sandboxes(
+                ListSandboxesRequest(pagination=PaginationRequest(page=1, page_size=20))
+            )
+            assert {item.id for item in response.items} == {"own-id", "legacy-id"}
+        finally:
+            self._clear_tenant(previous)
+
+    def test_get_other_tenant_returns_404(self, k8s_service, mock_workload):
+        other = self._labeled_workload(mock_workload, "other-id", "geip")
+        k8s_service.workload_provider.get_workload.return_value = other
+        self._stub_list_status(k8s_service)
+
+        previous = self._as_tenant("gdds")
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                k8s_service.get_sandbox("other-id")
+            assert exc_info.value.status_code == 404
+        finally:
+            self._clear_tenant(previous)
+
+    def test_get_own_tenant_succeeds(self, k8s_service, mock_workload):
+        own = self._labeled_workload(mock_workload, "own-id", "gdds")
+        k8s_service.workload_provider.get_workload.return_value = own
+        self._stub_list_status(k8s_service)
+
+        previous = self._as_tenant("gdds")
+        try:
+            sandbox = k8s_service.get_sandbox("own-id")
+            assert sandbox.id == "own-id"
+        finally:
+            self._clear_tenant(previous)
+
+    def test_delete_other_tenant_returns_404(self, k8s_service, mock_workload):
+        other = self._labeled_workload(mock_workload, "other-id", "geip")
+        k8s_service.workload_provider.get_workload.return_value = other
+
+        previous = self._as_tenant("gdds")
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                k8s_service.delete_sandbox("other-id")
+            assert exc_info.value.status_code == 404
+            k8s_service.workload_provider.delete_workload.assert_not_called()
+        finally:
+            self._clear_tenant(previous)

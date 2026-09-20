@@ -51,6 +51,7 @@ from opensandbox_server.config import AppConfig, INGRESS_MODE_GATEWAY, SecureAcc
 from opensandbox_server.services.constants import (
     SANDBOX_ID_LABEL,
     SANDBOX_MANAGED_VOLUMES_LABEL,
+    SANDBOX_TENANT_LABEL,
     SandboxErrorCodes,
 )
 from opensandbox_server.services.endpoint_auth import generate_egress_token, generate_secure_access_token
@@ -83,7 +84,9 @@ from opensandbox_server.services.signing import (
 )
 from opensandbox_server.services.k8s.workload_access import (
     _delete_workload_or_404,
-    _get_workload_or_404,
+    _enforce_tenant_ownership,
+    _get_owned_workload_or_404,
+    _workload_labels,
 )
 from opensandbox_server.services.sandbox_service import SandboxService
 from opensandbox_server.services.validators import (
@@ -967,6 +970,9 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
                 egress_token_factory=generate_egress_token,
                 secure_access_token_factory=generate_secure_access_token,
             )
+            tenant = get_current_tenant()
+            if tenant is not None:
+                context.labels[SANDBOX_TENANT_LABEL] = tenant.name
             apply_access_renew_extend_seconds_to_mapping(context.annotations, request.extensions)
             apply_extensions_to_mapping(context.annotations, request.extensions)
 
@@ -1218,7 +1224,7 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
     def get_sandbox(self, sandbox_id: str) -> Sandbox:
         try:
             ns = self._resolve_namespace_for_lookup(sandbox_id)
-            workload = _get_workload_or_404(
+            workload = _get_owned_workload_or_404(
                 self.workload_provider,
                 ns,
                 sandbox_id,
@@ -1236,9 +1242,15 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
             namespace=self._resolve_namespace(),
             label_selector=SANDBOX_ID_LABEL,
         )
-        return [
-            _build_sandbox_from_workload(workload, self.workload_provider) for workload in workloads
-        ]
+        tenant = get_current_tenant()
+        sandboxes = []
+        for workload in workloads:
+            if tenant is not None:
+                owner = _workload_labels(workload).get(SANDBOX_TENANT_LABEL)
+                if owner is not None and owner != tenant.name:
+                    continue
+            sandboxes.append(_build_sandbox_from_workload(workload, self.workload_provider))
+        return sandboxes
 
     def list_sandboxes(self, request: ListSandboxesRequest) -> ListSandboxesResponse:
         try:
@@ -1256,9 +1268,12 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
     
     def delete_sandbox(self, sandbox_id: str) -> None:
         try:
+            ns = self._resolve_namespace()
+            if get_current_tenant() is not None:
+                _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
             _delete_workload_or_404(
                 self.workload_provider,
-                self._resolve_namespace(),
+                ns,
                 sandbox_id,
             )
             logger.info(f"Deleted sandbox: {sandbox_id}")
@@ -1340,7 +1355,10 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
     
     def pause_sandbox(self, sandbox_id: str) -> None:
         try:
-            self.workload_provider.pause_sandbox(sandbox_id, self._resolve_namespace())
+            ns = self._resolve_namespace()
+            if get_current_tenant() is not None:
+                _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
+            self.workload_provider.pause_sandbox(sandbox_id, ns)
         except NotImplementedError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1378,7 +1396,10 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
 
     def resume_sandbox(self, sandbox_id: str) -> None:
         try:
-            self.workload_provider.resume_sandbox(sandbox_id, self._resolve_namespace())
+            ns = self._resolve_namespace()
+            if get_current_tenant() is not None:
+                _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
+            self.workload_provider.resume_sandbox(sandbox_id, ns)
         except NotImplementedError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1422,6 +1443,7 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
         )
         if not workload:
             return None
+        _enforce_tenant_ownership(workload, sandbox_id)
         if isinstance(workload, dict):
             annotations = workload.get("metadata", {}).get("annotations") or {}
         else:
@@ -1450,7 +1472,7 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
 
         try:
             ns = self._resolve_namespace_for_lookup(sandbox_id)
-            workload = _get_workload_or_404(
+            workload = _get_owned_workload_or_404(
                 self.workload_provider,
                 ns,
                 sandbox_id,
@@ -1488,7 +1510,7 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
 
     def patch_sandbox_metadata(self, sandbox_id: str, patch: PatchSandboxMetadataRequest) -> Sandbox:
         """Patch sandbox metadata via JSON Merge Patch (RFC 7396). Does not restart the sandbox."""
-        workload = _get_workload_or_404(
+        workload = _get_owned_workload_or_404(
             self.workload_provider,
             self._resolve_namespace(),
             sandbox_id,
@@ -1577,7 +1599,7 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
 
         try:
             ns = self._resolve_namespace_for_lookup(sandbox_id)
-            workload = _get_workload_or_404(
+            workload = _get_owned_workload_or_404(
                 self.workload_provider,
                 ns,
                 sandbox_id,
