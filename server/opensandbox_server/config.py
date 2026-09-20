@@ -631,6 +631,14 @@ class KubernetesRuntimeConfig(BaseModel):
         default=None,
         description="Absolute path to the kubeconfig file used for API authentication.",
     )
+    insecure_skip_tls_verify: bool = Field(
+        default=False,
+        description=(
+            "Skip TLS certificate verification for the Kubernetes API server. "
+            "Use only as a temporary workaround when in-cluster ServiceAccount CA "
+            "does not match the apiserver certificate; disable once cluster CA is fixed."
+        ),
+    )
     informer_enabled: bool = Field(
         default=True,
         description=(
