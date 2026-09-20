@@ -146,7 +146,6 @@ If `runtime.type = "kubernetes"` and the `[kubernetes]` table is absent, the ser
 | `sandbox_create_timeout_seconds` | integer | `60` | Max time to wait for a new sandbox to become ready (e.g. IP assigned), in seconds. |
 | `pool_acquisition_timeout_seconds` | integer | `30` | Max cumulative time to wait while Pool capacity prevents allocation. This does not extend `sandbox_create_timeout_seconds`. |
 | `sandbox_create_poll_interval_seconds` | float | `1.0` | Poll interval while waiting for readiness. |
-| `snapshot_create_timeout_seconds` | integer | `900` | Max time to wait for a Kubernetes public snapshot to become ready, in seconds. Set this greater than the controller snapshot `commitJobTimeout` / `--commit-job-timeout`. |
 | `informer_enabled` | boolean | `true` | **[Beta]** Use informer/watch cache for reads to reduce API load. |
 | `informer_resync_seconds` | integer | `300` | **[Beta]** Full resync period for the informer cache. |
 | `informer_watch_timeout_seconds` | integer | `60` | **[Beta]** Watch stream restart interval. |
@@ -181,7 +180,7 @@ Kubernetes workloads are created by a **workload provider**. There is **no** `[b
 
 ### fsb (fast-sandbox) settings under `[kubernetes]`
 
-The fsb backend shares the `[kubernetes]` block; the kubernetes runtime also serves fsb (`flt-`) sandboxes side by side, so these fields are always available.
+The fsb backend shares the `[kubernetes]` block; the kubernetes runtime also serves fsb (`fsb-`) sandboxes side by side, so these fields are always available.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -191,7 +190,7 @@ The fsb backend shares the `[kubernetes]` block; the kubernetes runtime also ser
 | `fastpath_resource_pool` | string | `"default-pool"` | Default fast-sandbox SandboxPool when `extensions.poolRef` is unset. |
 | `template_s3_publish_secret` | string | `"sandbox-oss-credentials"` | Secret (in the platform namespace) holding the object-store credentials referenced by server-created SandboxTemplates. |
 
-The fsb backend is always composed under `runtime.type = "kubernetes"`; its sandboxes are created via `templateId` (or `flt-` prefixed lifecycle operations) and use the `[kubernetes].namespace`.
+The fsb backend is always composed under `runtime.type = "kubernetes"`; its sandboxes are created via `templateId` (or `fsb-` prefixed lifecycle operations) and use the `[kubernetes].namespace`.
 
 ---
 

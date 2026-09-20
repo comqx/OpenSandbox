@@ -50,7 +50,6 @@ def test_resolve_proxy_host_detects_supported_container_markers(
 @pytest.fixture
 def mock_docker_service():
     """Create a DockerSandboxService with mocked docker client."""
-    # Setup base config
     config = AppConfig(
         server=ServerConfig(port=8080, host="0.0.0.0"),
         runtime=RuntimeConfig(type="docker", execd_image="test/execd:latest"),
@@ -62,7 +61,6 @@ def mock_docker_service():
         mock_client = MagicMock()
         mock_docker.return_value = mock_client
 
-        # Initialize service
         service = DockerSandboxService(config=config)
         # Inject the mock client directly to ensure we control it
         service.docker_client = mock_client
@@ -220,7 +218,7 @@ def test_get_endpoint_bridge_internal_resolution_with_egress_sidecar_falls_back_
     endpoint = service.get_endpoint("sbx-123", 18080, resolve_internal=True)
 
     assert endpoint.endpoint == "127.0.0.1:50002/proxy/18080"
-    assert endpoint.headers is None
+    assert endpoint.headers == {OPEN_SANDBOX_EGRESS_AUTH_HEADER: "egress-token"}
 
 
 def test_get_endpoint_bridge_internal_resolution_with_egress_sidecar_ignores_container_ip(
@@ -245,7 +243,7 @@ def test_get_endpoint_bridge_internal_resolution_with_egress_sidecar_ignores_con
     endpoint = service.get_endpoint("sbx-123", 18080, resolve_internal=True)
 
     assert endpoint.endpoint == "127.0.0.1:50002/proxy/18080"
-    assert endpoint.headers is None
+    assert endpoint.headers == {OPEN_SANDBOX_EGRESS_AUTH_HEADER: "egress-token"}
 
 
 def test_get_endpoint_bridge_internal_resolution_with_egress_sidecar_uses_proxy_host_not_eip(
@@ -272,7 +270,7 @@ def test_get_endpoint_bridge_internal_resolution_with_egress_sidecar_uses_proxy_
     endpoint = service.get_endpoint("sbx-123", 18080, resolve_internal=True)
 
     assert endpoint.endpoint == "127.0.0.1:50002/proxy/18080"
-    assert endpoint.headers is None
+    assert endpoint.headers == {OPEN_SANDBOX_EGRESS_AUTH_HEADER: "egress-token"}
 
 
 def test_get_endpoint_bridge_public_uses_eip_when_set(mock_docker_service):
