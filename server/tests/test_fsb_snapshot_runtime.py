@@ -274,6 +274,7 @@ def test_start_status_watch_registers_namespaces_and_invokes_callback() -> None:
     }
     k8s.watch_handlers[0]("MODIFIED", cr)
 
+    assert PLURAL == "sandboxsnapshots"
     assert k8s.watch_calls == [
         ("sandbox.fast.io", "v1alpha2", "default", PLURAL),
         ("sandbox.fast.io", "v1alpha2", "tenant-a", PLURAL),

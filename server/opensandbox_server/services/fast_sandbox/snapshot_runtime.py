@@ -49,7 +49,7 @@ from opensandbox_server.services.snapshot_runtime import (
 
 GROUP = "sandbox.fast.io"
 VERSION = "v1alpha2"
-PLURAL = "sandboxesnapshots"
+PLURAL = "sandboxsnapshots"
 
 # FastPath validates snapshot metadata keys as DNS-1123 labels and projects
 # them onto CR labels as "metadata.sandbox.fast.io/<key>" (same convention as
