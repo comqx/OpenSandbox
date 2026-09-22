@@ -2777,9 +2777,37 @@ class TestSharedNamespaceTenantIsolation:
 
         previous = self._as_tenant("gdds")
         try:
-            with pytest.raises(HTTPException) as exc_info:
-                k8s_service.delete_sandbox("other-id")
+            with patch.object(k8s_service, "_cleanup_managed_pvcs") as mock_cleanup:
+                with pytest.raises(HTTPException) as exc_info:
+                    k8s_service.delete_sandbox("other-id")
             assert exc_info.value.status_code == 404
             k8s_service.workload_provider.delete_workload.assert_not_called()
+            mock_cleanup.assert_not_called()
+        finally:
+            self._clear_tenant(previous)
+
+    def test_pause_other_tenant_returns_404(self, k8s_service, mock_workload):
+        other = self._labeled_workload(mock_workload, "other-id", "geip")
+        k8s_service.workload_provider.get_workload.return_value = other
+
+        previous = self._as_tenant("gdds")
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                k8s_service.pause_sandbox("other-id")
+            assert exc_info.value.status_code == 404
+            k8s_service.workload_provider.pause_sandbox.assert_not_called()
+        finally:
+            self._clear_tenant(previous)
+
+    def test_resume_other_tenant_returns_404(self, k8s_service, mock_workload):
+        other = self._labeled_workload(mock_workload, "other-id", "geip")
+        k8s_service.workload_provider.get_workload.return_value = other
+
+        previous = self._as_tenant("gdds")
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                k8s_service.resume_sandbox("other-id")
+            assert exc_info.value.status_code == 404
+            k8s_service.workload_provider.resume_sandbox.assert_not_called()
         finally:
             self._clear_tenant(previous)

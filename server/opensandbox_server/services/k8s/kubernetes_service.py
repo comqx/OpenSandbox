@@ -1267,10 +1267,12 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
             ) from e
     
     def delete_sandbox(self, sandbox_id: str) -> None:
+        ns = self._resolve_namespace()
+        if get_current_tenant() is not None:
+            # Ownership 404 must not enter the handler below: that path treats
+            # 404 as "workload gone" and sweeps still-live managed PVCs.
+            _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
         try:
-            ns = self._resolve_namespace()
-            if get_current_tenant() is not None:
-                _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
             _delete_workload_or_404(
                 self.workload_provider,
                 ns,
@@ -1359,6 +1361,8 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
             if get_current_tenant() is not None:
                 _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
             self.workload_provider.pause_sandbox(sandbox_id, ns)
+        except HTTPException:
+            raise
         except NotImplementedError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1400,6 +1404,8 @@ class KubernetesSandboxService(K8sDiagnosticsMixin, SandboxService, ExtensionSer
             if get_current_tenant() is not None:
                 _get_owned_workload_or_404(self.workload_provider, ns, sandbox_id)
             self.workload_provider.resume_sandbox(sandbox_id, ns)
+        except HTTPException:
+            raise
         except NotImplementedError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
