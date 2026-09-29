@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { adminApi, sandboxApi } from '../api/client';
 import type { DiagnosticContentResponse } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { SandboxColoredLogViewer } from './SandboxColoredLogViewer';
 import { DIAGNOSTIC_SCOPES } from '../utils/format';
 
 type Props = {
@@ -95,21 +96,11 @@ export function SandboxLogPanel({
       );
     }
     return (
-      <pre
-        style={{
-          margin: 0,
-          background: '#1e1e1e',
-          color: '#d4d4d4',
-          padding: 12,
-          maxHeight,
-          overflow: 'auto',
-          fontSize: 12,
-          lineHeight: 1.5,
-          borderRadius: 6,
-        }}
-      >
-        {data.content?.trim() || '(empty)'}
-      </pre>
+      <SandboxColoredLogViewer
+        content={data.content ?? ''}
+        maxHeight={maxHeight}
+        contentKey={`${scope}-${data.content?.length ?? 0}-${loading ? 'loading' : 'idle'}`}
+      />
     );
   };
 

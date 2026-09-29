@@ -196,6 +196,8 @@ export const adminApi = {
       `/api/admin/sandboxes/${encodeURIComponent(sandboxId)}/logs/archive?${params}`,
     );
   },
+  listTenants: () =>
+    apiRequest<{ items: { name: string; namespace?: string }[] }>('/api/admin/tenants'),
   sandboxes: (query: Record<string, string | number | undefined>) => {
     const params = new URLSearchParams();
     Object.entries(query).forEach(([k, v]) => {
@@ -299,4 +301,42 @@ export const poolApi = {
 export const platformApi = {
   version: () => apiRequest<Record<string, unknown>>('/api/version'),
   bffHealth: () => apiRequest<{ status: string }>('/health'),
+};
+
+export const historyApi = {
+  getSandbox: (sandboxId: string, tenant?: string) => {
+    const qs = tenant ? `?tenant=${encodeURIComponent(tenant)}` : '';
+    return apiRequest<import('./types').SandboxHistoryItem>(
+      `/api/history/sandboxes/${encodeURIComponent(sandboxId)}${qs}`,
+    );
+  },
+  listSandboxes: (query?: Record<string, string | number | boolean | undefined>) => {
+    const params = new URLSearchParams();
+    Object.entries(query ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') params.set(k, String(v));
+    });
+    const qs = params.toString();
+    return apiRequest<import('./types').SandboxHistoryListResponse>(
+      `/api/history/sandboxes${qs ? `?${qs}` : ''}`,
+    );
+  },
+  stats: (tenant?: string) => {
+    const qs = tenant ? `?tenant=${encodeURIComponent(tenant)}` : '';
+    return apiRequest<import('./types').SandboxHistoryStats>(`/api/history/stats${qs}`);
+  },
+  usage: (query: { from: string; to: string; tenant?: string }) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to });
+    if (query.tenant) params.set('tenant', query.tenant);
+    return apiRequest<import('./types').TenantUsageResponse>(`/api/history/usage?${params}`);
+  },
+  imageStats: (query?: { from?: string; to?: string; tenant?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.from) params.set('from', query.from);
+    if (query?.to) params.set('to', query.to);
+    if (query?.tenant) params.set('tenant', query.tenant);
+    const qs = params.toString();
+    return apiRequest<import('./types').ImageStatsResponse>(
+      `/api/history/images/stats${qs ? `?${qs}` : ''}`,
+    );
+  },
 };

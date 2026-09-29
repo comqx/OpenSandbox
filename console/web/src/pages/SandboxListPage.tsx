@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { PlusOutlined } from '@ant-design/icons';
 import { Button, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
@@ -103,8 +104,8 @@ export function SandboxListPage() {
             options={SANDBOX_STATES.map((s) => ({ label: s, value: s }))}
           />
           <Button onClick={() => void load()}>刷新</Button>
-          <Button type="primary" onClick={() => navigate('/sandboxes/new')}>
-            创建
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/sandboxes/new')}>
+            创建沙箱
           </Button>
         </Space>
       </Space>
