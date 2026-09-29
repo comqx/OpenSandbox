@@ -26,10 +26,11 @@ _MEMORY_RE = re.compile(
 )
 
 
-def resource_limits_dict(
+def explicit_resource_limits(
     sandbox: dict[str, Any],
     create_request: dict[str, Any] | None,
-) -> dict[str, str]:
+) -> dict[str, str] | None:
+    """Limits from Lifecycle sandbox or stored create body only; no usage defaults."""
     for source in (sandbox, create_request or {}):
         rl = source.get("resourceLimits")
         if isinstance(rl, dict) and rl:
@@ -39,6 +40,16 @@ def resource_limits_dict(
                     out[str(k)] = str(v)
             if out:
                 return out
+    return None
+
+
+def resource_limits_dict(
+    sandbox: dict[str, Any],
+    create_request: dict[str, Any] | None,
+) -> dict[str, str]:
+    explicit = explicit_resource_limits(sandbox, create_request)
+    if explicit:
+        return explicit
     return {"cpu": _DEFAULT_CPU, "memory": _DEFAULT_MEMORY}
 
 
