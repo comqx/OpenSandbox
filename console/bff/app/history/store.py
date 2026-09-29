@@ -23,7 +23,11 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from app.config import Settings
-from app.history.resources import limits_to_numbers, resource_limits_dict
+from app.history.resources import (
+    explicit_resource_limits,
+    limits_to_numbers,
+    resource_limits_dict,
+)
 from app.runtime import attach_runtime_summary
 
 logger = logging.getLogger(__name__)
@@ -157,10 +161,32 @@ def upsert_from_sandbox(
     if state in _TERMINAL and last_transition:
         ended_at = last_transition
     now = datetime.now(timezone.utc)
-    limits = resource_limits_dict(enriched, create_request)
-    cpu_limit, memory_limit, cpu_cores, memory_gi = limits_to_numbers(limits)
 
     with _pool.connection() as conn:
+        existing_cr: dict[str, Any] | None = None
+        if create_request is None:
+            prev = conn.execute(
+                "SELECT create_request FROM console_sandbox_history WHERE sandbox_id = %s",
+                (sandbox_id,),
+            ).fetchone()
+            if prev and prev.get("create_request") is not None:
+                raw = prev["create_request"]
+                if isinstance(raw, str):
+                    try:
+                        existing_cr = json.loads(raw)
+                    except json.JSONDecodeError:
+                        existing_cr = None
+                elif isinstance(raw, dict):
+                    existing_cr = raw
+
+        merged_create_request = create_request if create_request is not None else existing_cr
+        explicit = explicit_resource_limits(enriched, merged_create_request)
+        if explicit:
+            cpu_limit, memory_limit, cpu_cores, memory_gi = limits_to_numbers(explicit)
+        else:
+            cpu_limit = memory_limit = None
+            cpu_cores = memory_gi = None
+
         conn.execute(
             """
             INSERT INTO console_sandbox_history (
@@ -187,10 +213,12 @@ def upsert_from_sandbox(
                 wall_clock_seconds = COALESCE(EXCLUDED.wall_clock_seconds, console_sandbox_history.wall_clock_seconds),
                 last_seen_at = EXCLUDED.last_seen_at,
                 create_request = COALESCE(
-                    console_sandbox_history.create_request, EXCLUDED.create_request
+                    EXCLUDED.create_request, console_sandbox_history.create_request
                 ),
                 cpu_limit = COALESCE(EXCLUDED.cpu_limit, console_sandbox_history.cpu_limit),
-                memory_limit = COALESCE(EXCLUDED.memory_limit, console_sandbox_history.memory_limit),
+                memory_limit = COALESCE(
+                    EXCLUDED.memory_limit, console_sandbox_history.memory_limit
+                ),
                 cpu_cores = COALESCE(EXCLUDED.cpu_cores, console_sandbox_history.cpu_cores),
                 memory_gi = COALESCE(EXCLUDED.memory_gi, console_sandbox_history.memory_gi)
             """,
@@ -843,12 +871,14 @@ def _limits_payload(row: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if limits:
         payload["resourceLimits"] = limits
+        _, _, cpu_from_limits, mem_from_limits = limits_to_numbers(limits)
+        payload["cpuCores"] = cpu_from_limits
+        payload["memoryGi"] = mem_from_limits
+    elif row.get("cpu_cores") is not None and row.get("memory_gi") is not None:
+        payload["cpuCores"] = float(row["cpu_cores"])
+        payload["memoryGi"] = float(row["memory_gi"])
     if requests:
         payload["resourceRequests"] = requests
-    if row.get("cpu_cores") is not None:
-        payload["cpuCores"] = float(row["cpu_cores"])
-    if row.get("memory_gi") is not None:
-        payload["memoryGi"] = float(row["memory_gi"])
     if timeout is not None:
         payload["createTimeoutSeconds"] = timeout
     return payload
