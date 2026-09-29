@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # Temporary workaround when in-cluster ServiceAccount CA does not match apiserver cert
     bff_k8s_insecure_skip_tls_verify: bool = False
     bff_k8s_system_namespace: str = "opensandbox-system"
-    bff_k8s_controller_deployment: str = "opensandbox-opensandbox-controller"
+    bff_k8s_controller_deployment: str = "opensandbox-controller-manager"
     bff_k8s_ingress_deployment: str = "opensandbox-ingress-gateway"
     bff_k8s_node_agent_namespace: str = "opensandbox-system"
     bff_k8s_node_agent_label_selector: str = "app.kubernetes.io/component=node-agent"

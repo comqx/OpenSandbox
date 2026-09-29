@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from kubernetes.client.exceptions import ApiException
+
 from app.config import Settings
 from app.k8s_client import load_apps_v1
 
@@ -71,5 +73,22 @@ async def probe_platform_deployment(
             ns,
             deployment_name.strip(),
         )
+    except ApiException as exc:
+        if exc.status == 404:
+            return {
+                "status": "not_found",
+                "note": (
+                    f'Deployment "{deployment_name}" not found in {ns}; '
+                    "fix BFF_K8S_CONTROLLER_DEPLOYMENT / BFF_K8S_INGRESS_DEPLOYMENT"
+                ),
+                "deployment": deployment_name,
+                "namespace": ns,
+            }
+        return {
+            "status": "error",
+            "note": exc.reason or str(exc),
+            "deployment": deployment_name,
+            "namespace": ns,
+        }
     except Exception as exc:
         return {"status": "error", "note": str(exc), "deployment": deployment_name, "namespace": ns}
