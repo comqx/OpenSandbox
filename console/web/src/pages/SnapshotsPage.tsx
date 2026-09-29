@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Button, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Form, Input, Modal, Space, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 
+import { SandboxStateTag } from '../components/SemanticTags';
 import { ApiError, adminApi, sandboxApi, snapshotApi } from '../api/client';
 import type { Snapshot } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -118,7 +119,7 @@ export function SnapshotsPage() {
     { title: '来源沙箱', dataIndex: 'sourceSandboxId' },
     {
       title: '状态',
-      render: (_, r) => <Tag>{r.status?.state ?? '—'}</Tag>,
+      render: (_, r) => <SandboxStateTag state={r.status?.state} />,
     },
     { title: '创建时间', dataIndex: 'createdAt' },
     {

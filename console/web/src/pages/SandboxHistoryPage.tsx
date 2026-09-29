@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from 'antd';
+import { Alert, Card, Col, Row, Space, Statistic, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -20,6 +20,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import { historyApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
 import type { SandboxHistoryItem, SandboxHistoryStats } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -134,8 +135,26 @@ export function SandboxHistoryPage() {
 
   const columns: ColumnsType<SandboxHistoryItem> = [
     { title: '沙箱 ID', dataIndex: 'sandboxId', ellipsis: true },
-    ...(isAdmin ? [{ title: '租户', dataIndex: 'tenant', width: 100 }] : []),
-    { title: '状态', dataIndex: 'state', width: 110, render: (s) => <Tag>{s ?? '—'}</Tag> },
+    ...(isAdmin
+      ? [
+          {
+            title: '租户',
+            dataIndex: 'tenant',
+            width: 128,
+            ellipsis: true,
+            onCell: () => consoleTagTableCellProps,
+            render: (t: string) => <TenantTag tenant={t} />,
+          },
+        ]
+      : []),
+    {
+      title: '状态',
+      dataIndex: 'state',
+      width: 124,
+      ellipsis: true,
+      onCell: () => consoleTagTableCellProps,
+      render: (s) => <SandboxStateTag state={s} />,
+    },
     {
       title: '生命周期时长',
       dataIndex: 'wallClockSeconds',
@@ -222,6 +241,8 @@ export function SandboxHistoryPage() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        tableLayout="fixed"
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           pageSize: 20,

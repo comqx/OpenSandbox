@@ -13,13 +13,14 @@
 // limitations under the License.
 
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Select, Space, Table, Tag, Typography } from 'antd';
+import { Button, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { sandboxApi } from '../api/client';
 import type { Sandbox } from '../api/types';
+import { SandboxStateTag } from '../components/SemanticTags';
 import { formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
 
 export function SandboxListPage() {
@@ -55,7 +56,7 @@ export function SandboxListPage() {
     {
       title: '状态',
       dataIndex: ['status', 'state'],
-      render: (s: string | undefined) => (s ? <Tag>{s}</Tag> : '—'),
+      render: (s: string | undefined) => <SandboxStateTag state={s} />,
     },
     {
       title: '镜像',

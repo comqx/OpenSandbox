@@ -17,6 +17,8 @@ import { useMemo } from 'react';
 
 import { enrichLogTextForDisplay } from '../utils/enrichLogText';
 
+import './SandboxColoredLogViewer.css';
+
 type Props = {
   content: string;
   maxHeight?: number;
@@ -35,27 +37,28 @@ export function SandboxColoredLogViewer({ content, maxHeight = 420, contentKey }
   const text = useMemo(() => enrichLogTextForDisplay(content), [content]);
 
   return (
-    <LazyLog
-      key={contentKey ?? text.length}
-      text={text}
-      height={maxHeight}
-      width="100%"
-      enableSearch
-      enableSearchNavigation
-      selectableLines
-      wrapLines
-      rowHeight={18}
-      style={LOG_VIEWER_STYLE}
-      containerStyle={{ background: '#1e1e1e', borderRadius: 6 }}
-      searchBarClassName="sandbox-log-search"
-      internacionalization={{
-        searchBar: {
-          searchPlaceholder: '搜索日志…',
-          filterLinesTitle: '仅显示匹配行',
-          previousButtonTitle: '上一处',
-          nextButtonTitle: '下一处',
-        },
-      }}
-    />
+    <div className="sandbox-log-viewer">
+      <LazyLog
+        key={contentKey ?? text.length}
+        text={text}
+        height={maxHeight}
+        width="100%"
+        enableSearch
+        enableSearchNavigation
+        selectableLines
+        rowHeight={18}
+        style={LOG_VIEWER_STYLE}
+        containerStyle={{ background: '#1e1e1e', borderRadius: 6, maxWidth: '100%' }}
+        searchBarClassName="sandbox-log-search"
+        internacionalization={{
+          searchBar: {
+            searchPlaceholder: '搜索日志…',
+            filterLinesTitle: '仅显示匹配行',
+            previousButtonTitle: '上一处',
+            nextButtonTitle: '下一处',
+          },
+        }}
+      />
+    </div>
   );
 }
