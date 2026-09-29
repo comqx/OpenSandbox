@@ -16,6 +16,7 @@ import { Alert, Input, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 
+import { TenantTag } from '../../components/SemanticTags';
 import { adminApi } from '../../api/client';
 import type { K8sWorkloadRow } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
@@ -57,7 +58,7 @@ export function K8sWorkloadsPage() {
   }
 
   const columns: ColumnsType<K8sWorkloadRow> = [
-    { title: '租户', dataIndex: 'tenant', width: 90 },
+    { title: '租户', dataIndex: 'tenant', width: 90, render: (t: string) => <TenantTag tenant={t} /> },
     { title: 'Namespace', dataIndex: 'namespace', width: 120 },
     { title: 'Pod', dataIndex: 'name', ellipsis: true },
     {

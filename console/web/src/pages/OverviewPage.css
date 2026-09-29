@@ -37,10 +37,27 @@ limitations under the License.
   display: block;
 }
 
-.overview-quick-nav .ant-btn {
-  height: 44px;
+.overview-quick-nav .overview-quick-nav-btn {
+  height: 40px;
   font-weight: 500;
-  border-radius: 8px;
+  font-size: 14px;
+  border-radius: var(--overview-card-radius);
+  color: rgba(0, 0, 0, 0.75);
+  border-color: var(--overview-border);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+
+.overview-quick-nav .overview-quick-nav-btn:not(:disabled):hover {
+  color: #1677ff !important;
+  border-color: #d9d9d9 !important;
+  background: #fafafa !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .overview-section-title {
@@ -81,12 +98,68 @@ limitations under the License.
 .overview-live-stat {
   padding: 20px 28px 18px;
   min-width: 0;
+  border-left: 3px solid transparent;
+}
+
+.overview-live-stat--total {
+  border-left-color: #1677ff;
+}
+
+.overview-live-stat--running-active {
+  border-left-color: #52c41a;
+}
+
+.overview-live-stat--running:not(.overview-live-stat--running-active) {
+  border-left-color: #d9d9d9;
+}
+
+.overview-live-stat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.overview-live-stat-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.overview-live-stat-icon--blue {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.overview-live-stat-icon--green {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.overview-live-stat-icon--muted {
+  background: #f5f5f5;
+  color: rgba(0, 0, 0, 0.35);
 }
 
 .overview-live-stat-label {
   display: block;
   font-size: 13px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.overview-live-stat-label-row {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+.overview-live-stat-label-row .ant-tag {
+  margin-inline-end: 0;
 }
 
 .overview-live-stat-value {
@@ -96,6 +169,18 @@ limitations under the License.
   color: rgba(0, 0, 0, 0.88);
   font-variant-numeric: tabular-nums;
   margin-bottom: 8px;
+}
+
+.overview-live-stat-value--blue {
+  color: #1677ff;
+}
+
+.overview-live-stat-value--green {
+  color: #389e0d;
+}
+
+.overview-live-stat-value--muted {
+  color: rgba(0, 0, 0, 0.35);
 }
 
 .overview-live-stat-foot {

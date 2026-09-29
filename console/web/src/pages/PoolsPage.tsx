@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Button, Input, Modal, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Input, Modal, Space, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 
+import { SandboxStateTag } from '../components/SemanticTags';
 import { ApiError, poolApi } from '../api/client';
 import type { PoolItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -122,7 +123,7 @@ export function PoolsPage() {
     { title: 'Namespace', dataIndex: 'namespace', render: (v) => v ?? '—' },
     {
       title: '状态',
-      render: (_, r) => <Tag>{r.status?.state ?? '—'}</Tag>,
+      render: (_, r) => <SandboxStateTag state={r.status?.state} />,
     },
     {
       title: '操作',

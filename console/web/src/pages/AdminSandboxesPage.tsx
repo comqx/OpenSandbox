@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -20,6 +20,7 @@ import { Link } from 'react-router-dom';
 import { adminApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
 import type { Sandbox } from '../api/types';
+import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
 
 export function AdminSandboxesPage() {
@@ -54,7 +55,10 @@ export function AdminSandboxesPage() {
     {
       title: '租户',
       dataIndex: 'tenant',
-      render: (t: string | undefined) => <Tag>{t ?? '—'}</Tag>,
+      width: 128,
+      ellipsis: true,
+      onCell: () => consoleTagTableCellProps,
+      render: (t: string | undefined) => <TenantTag tenant={t} />,
     },
     {
       title: '名称 / ID',
@@ -70,7 +74,10 @@ export function AdminSandboxesPage() {
     },
     {
       title: '状态',
-      render: (_, r) => r.status?.state ?? '—',
+      width: 124,
+      ellipsis: true,
+      onCell: () => consoleTagTableCellProps,
+      render: (_, r) => <SandboxStateTag state={r.status?.state} />,
     },
     {
       title: '运行时长',

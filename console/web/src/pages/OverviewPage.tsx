@@ -22,13 +22,13 @@ import {
   Spin,
   Statistic,
   Table,
-  Tag,
   Typography,
 } from 'antd';
 import {
   ClockCircleOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
+  PlayCircleOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -40,6 +40,7 @@ import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../componen
 import { USAGE_METRIC_HINTS, UsageMetricTitle } from '../components/UsageMetricTitle';
 import type { SandboxHistoryStats, TenantUsageRow } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { formatDuration } from '../utils/format';
 import { historySandboxesPath } from '../utils/historyLinks';
 import {
@@ -49,23 +50,6 @@ import {
 } from '../utils/usagePeriod';
 
 import './OverviewPage.css';
-
-const TENANT_TAG_COLORS = [
-  'blue',
-  'geekblue',
-  'purple',
-  'cyan',
-  'green',
-  'orange',
-  'gold',
-  'magenta',
-] as const;
-
-function tenantTagColor(tenant: string): (typeof TENANT_TAG_COLORS)[number] {
-  let h = 0;
-  for (let i = 0; i < tenant.length; i++) h = (h * 31 + tenant.charCodeAt(i)) >>> 0;
-  return TENANT_TAG_COLORS[h % TENANT_TAG_COLORS.length];
-}
 
 function shareProgressColor(percent: number): string {
   if (percent >= 40) return '#1677ff';
@@ -179,21 +163,46 @@ function LiveRuntimePanel({
   return (
     <Card className="overview-live-card" bordered={false}>
       <div className="overview-live-stats">
-        <div className="overview-live-stat">
-          <Typography.Text type="secondary" className="overview-live-stat-label">
-            列表中的沙箱数
-          </Typography.Text>
-          <div className="overview-live-stat-value">{total}</div>
+        <div className="overview-live-stat overview-live-stat--total">
+          <div className="overview-live-stat-head">
+            <div className="overview-live-stat-icon overview-live-stat-icon--blue" aria-hidden>
+              <CloudServerOutlined />
+            </div>
+            <Typography.Text type="secondary" className="overview-live-stat-label">
+              列表中的沙箱数
+            </Typography.Text>
+          </div>
+          <div className="overview-live-stat-value overview-live-stat-value--blue">{total}</div>
           <Typography.Text type="secondary" className="overview-live-stat-foot">
             当前 API 分页列表（最多 200 条）
           </Typography.Text>
         </div>
         <div className="overview-live-stat-divider" aria-hidden />
-        <div className="overview-live-stat">
-          <Typography.Text type="secondary" className="overview-live-stat-label">
-            Running
-          </Typography.Text>
-          <div className="overview-live-stat-value">{running}</div>
+        <div
+          className={`overview-live-stat overview-live-stat--running${
+            running > 0 ? ' overview-live-stat--running-active' : ''
+          }`}
+        >
+          <div className="overview-live-stat-head">
+            <div
+              className={`overview-live-stat-icon${
+                running > 0 ? ' overview-live-stat-icon--green' : ' overview-live-stat-icon--muted'
+              }`}
+              aria-hidden
+            >
+              <PlayCircleOutlined />
+            </div>
+            <span className="overview-live-stat-label-row">
+              <SandboxStateTag state="Running" />
+            </span>
+          </div>
+          <div
+            className={`overview-live-stat-value${
+              running > 0 ? ' overview-live-stat-value--green' : ' overview-live-stat-value--muted'
+            }`}
+          >
+            {running}
+          </div>
           <Typography.Text type="secondary" className="overview-live-stat-foot">
             状态为 Running 的沙箱
           </Typography.Text>
@@ -315,9 +324,7 @@ export function OverviewPage() {
         dataIndex: 'tenant',
         width: 140,
         render: (t: string) => (
-          <Tag color={tenantTagColor(t)} className="overview-tenant-tag">
-            {t}
-          </Tag>
+          <TenantTag tenant={t} className="overview-tenant-tag" />
         ),
       },
       {
@@ -396,7 +403,7 @@ export function OverviewPage() {
     [monthUsagePeriod.from, monthUsagePeriod.to],
   );
 
-  const quickLinks = isAdmin
+  const quickLinks: { to: string; label: string }[] = isAdmin
     ? [
         { to: '/admin/sandboxes', label: '全局沙箱（实时）' },
         { to: '/history/sandboxes', label: '申请历史' },
@@ -432,7 +439,7 @@ export function OverviewPage() {
       <nav className="overview-quick-nav" aria-label="快捷入口">
         {quickLinks.map((item) => (
           <Link key={item.to} to={item.to}>
-            <Button block size="large">
+            <Button block className="overview-quick-nav-btn">
               {item.label}
             </Button>
           </Link>

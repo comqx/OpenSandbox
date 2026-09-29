@@ -19,6 +19,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { adminApi, ApiError, historyApi, sandboxApi } from '../api/client';
 import { SandboxArchiveLogPanel } from '../components/SandboxArchiveLogPanel';
 import { SandboxLogPanel } from '../components/SandboxLogPanel';
+import { SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import type { Sandbox, SandboxHistoryItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { formatDuration, sandboxDisplayName } from '../utils/format';
@@ -231,9 +232,9 @@ export function SandboxDetailPage() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           {titleText}
         </Typography.Title>
-        {displayState && <Tag color="blue">{displayState}</Tag>}
+        {displayState && <SandboxStateTag state={displayState} />}
         {historyOnly && <Tag color="default">历史记录</Tag>}
-        {isAdminProxy && <Tag>{adminTenant}</Tag>}
+        {isAdminProxy && <TenantTag tenant={adminTenant} />}
       </Space>
 
       {historyOnly && (

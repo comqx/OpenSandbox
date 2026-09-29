@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom';
 
 import { historyApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { TenantTag } from '../components/SemanticTags';
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
 import { USAGE_METRIC_HINTS, UsageMetricTitle } from '../components/UsageMetricTitle';
 import type { TenantUsageResponse, TenantUsageRow } from '../api/types';
@@ -70,7 +71,9 @@ export function TenantUsagePage() {
 
   const columns: ColumnsType<TenantUsageRow> = useMemo(
     () => [
-      ...(isAdmin ? [{ title: '租户', dataIndex: 'tenant', width: 120 }] : []),
+      ...(isAdmin
+        ? [{ title: '租户', dataIndex: 'tenant', width: 120, render: (t: string) => <TenantTag tenant={t} /> }]
+        : []),
       {
         title: <UsageMetricTitle label="沙箱数" hint={USAGE_METRIC_HINTS.sandboxCount} />,
         dataIndex: 'sandboxCount',
