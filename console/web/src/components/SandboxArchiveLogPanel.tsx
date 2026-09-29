@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { adminApi, sandboxApi } from '../api/client';
 import type { DiagnosticContentResponse } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { SandboxColoredLogViewer } from './SandboxColoredLogViewer';
 
 type Props = {
   sandboxId: string;
@@ -113,21 +114,11 @@ export function SandboxArchiveLogPanel({
         <Typography.Text type="secondary">点击「刷新归档」从 node-agent 持久化存储加载</Typography.Text>
       )}
       {data?.content != null && (
-        <pre
-          style={{
-            margin: 0,
-            background: '#1a2332',
-            color: '#c8d3f5',
-            padding: 12,
-            maxHeight,
-            overflow: 'auto',
-            fontSize: 12,
-            lineHeight: 1.5,
-            borderRadius: 6,
-          }}
-        >
-          {data.content.trim() || '(empty)'}
-        </pre>
+        <SandboxColoredLogViewer
+          content={data.content}
+          maxHeight={maxHeight}
+          contentKey={`archive-${data.content.length}-${loading ? 'loading' : 'idle'}`}
+        />
       )}
     </div>
   );

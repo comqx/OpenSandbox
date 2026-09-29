@@ -65,6 +65,106 @@ export interface RuntimeStats {
   asOf: string;
 }
 
+export interface ResourceLimitsMap {
+  cpu?: string;
+  memory?: string;
+  disk?: string;
+  [key: string]: string | undefined;
+}
+
+export interface SandboxHistoryItem {
+  sandboxId: string;
+  tenant?: string;
+  namespace?: string;
+  state?: string;
+  imageUri?: string;
+  createdAt?: string;
+  expiresAt?: string;
+  endedAt?: string;
+  deletedAt?: string;
+  wallClockSeconds?: number;
+  snapshotCount?: number;
+  source?: string;
+  firstRecordedAt?: string;
+  lastSeenAt?: string;
+  /** 创建时的 Kubernetes resourceLimits（来自历史入库） */
+  resourceLimits?: ResourceLimitsMap;
+  resourceRequests?: ResourceLimitsMap;
+  cpuCores?: number;
+  memoryGi?: number;
+  createTimeoutSeconds?: number;
+}
+
+export interface SandboxHistoryStats {
+  enabled?: boolean;
+  totalRecords?: number;
+  activeRecords?: number;
+  totalWallClockSeconds?: number;
+  avgWallClockSeconds?: number;
+  asOf?: string;
+}
+
+export interface ImageStatsRow {
+  imageUri: string;
+  sandboxCount: number;
+  activeCount: number;
+  tenantCount: number;
+  sharePercent: number;
+  lastUsedAt?: string;
+}
+
+export interface ImageStatsResponse {
+  enabled?: boolean;
+  asOf?: string;
+  totalRecords?: number;
+  distinctImages?: number;
+  items: ImageStatsRow[];
+}
+
+export interface SandboxHistoryListResponse {
+  items: SandboxHistoryItem[];
+  period?: { from?: string; to?: string };
+  pagination?: {
+    page?: number;
+    pageSize?: number;
+    totalItems?: number;
+    totalPages?: number;
+    hasNextPage?: boolean;
+  };
+}
+
+export interface TenantUsageSharePercent {
+  time?: number;
+  cpu?: number;
+  memory?: number;
+  /** Equal-weight mean of time/cpu/memory shares; sums to ~100% across tenants. */
+  composite?: number;
+}
+
+export interface TenantUsageRow {
+  tenant: string;
+  sandboxCount: number;
+  overlapSeconds: number;
+  cpuCoreSeconds: number;
+  memoryGiSeconds: number;
+  sharePercent?: TenantUsageSharePercent;
+}
+
+export interface TenantUsageResponse {
+  enabled?: boolean;
+  basis?: string;
+  coverageNote?: string;
+  shareFormula?: Record<string, string>;
+  period?: { from?: string; to?: string };
+  totals?: {
+    sandboxCount?: number;
+    overlapSeconds?: number;
+    cpuCoreSeconds?: number;
+    memoryGiSeconds?: number;
+  };
+  tenants?: TenantUsageRow[];
+}
+
 export interface Snapshot {
   id: string;
   name?: string;

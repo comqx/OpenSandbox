@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     bff_nodeagent_oss_access_key_secret: str = ""
     bff_nodeagent_archive_max_bytes: int = 524_288
 
+    # Optional: sandbox apply history in PostgreSQL (same DB as Server [store] is OK; separate tables)
+    bff_history_enabled: bool = False
+    bff_history_database_url: str = ""
+
     @property
     def cors_origins_list(self) -> list[str]:
         if self.bff_cors_origins.strip() == "*":
