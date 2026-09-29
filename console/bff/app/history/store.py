@@ -550,7 +550,10 @@ def history_stats(settings: Settings, *, tenant_name: str | None) -> dict[str, A
     return {
         "enabled": True,
         "asOf": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        **row,
+        "totalRecords": int(row["total_records"]),
+        "activeRecords": int(row["active_records"]),
+        "totalWallClockSeconds": int(row["total_wall_clock_seconds"]),
+        "avgWallClockSeconds": int(row["avg_wall_clock_seconds"]),
     }
 
 
