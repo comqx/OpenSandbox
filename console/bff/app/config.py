@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     # Optional: probe node-agent DaemonSet via in-cluster Kubernetes API + pod /readyz
     bff_k8s_probe_enabled: bool = False
+    # Temporary workaround when in-cluster ServiceAccount CA does not match apiserver cert
+    bff_k8s_insecure_skip_tls_verify: bool = False
     bff_k8s_system_namespace: str = "opensandbox-system"
     bff_k8s_controller_deployment: str = "opensandbox-opensandbox-controller"
     bff_k8s_ingress_deployment: str = "opensandbox-ingress-gateway"

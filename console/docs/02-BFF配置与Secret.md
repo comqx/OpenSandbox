@@ -18,6 +18,7 @@
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `BFF_K8S_PROBE_ENABLED` | `false` | K8s 探针总开关：platform 组件、node-agent、workloads/events API |
+| `BFF_K8S_INSECURE_SKIP_TLS_VERIFY` | `false` | 跳过访问 Kubernetes API 的 TLS 校验（仅当 Pod 内 SA `ca.crt` 与 apiserver 证书链不一致时的临时手段；与 Server `[kubernetes] insecure_skip_tls_verify` 独立，需分别配置） |
 | `BFF_K8S_SYSTEM_NAMESPACE` | `opensandbox-system` | controller/ingress Deployment 所在 namespace |
 | `BFF_K8S_CONTROLLER_DEPLOYMENT` | `opensandbox-opensandbox-controller` | Helm release 名不一致时请改 |
 | `BFF_K8S_INGRESS_DEPLOYMENT` | `opensandbox-ingress-gateway` | 同上 |

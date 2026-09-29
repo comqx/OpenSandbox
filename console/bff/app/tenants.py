@@ -30,8 +30,17 @@ class TenantRecord:
     api_key: str
 
 
+def _load_toml(path: Path) -> dict:
+    """Parse TOML file: stdlib tomllib (3.11+) wants str; tomli backport wants bytes."""
+    raw = path.read_bytes()
+    try:
+        return tomllib.loads(raw)
+    except TypeError:
+        return tomllib.loads(raw.decode("utf-8"))
+
+
 def _read_tenants_file(path: Path) -> list[TenantRecord]:
-    data = tomllib.loads(path.read_bytes())
+    data = _load_toml(path)
     records: list[TenantRecord] = []
     seen_keys: dict[str, str] = {}
 
@@ -65,7 +74,7 @@ def get_tenant_by_name(path: str | Path, name: str) -> TenantRecord | None:
 
 
 def lookup_by_api_key(path: str | Path, api_key: str) -> TenantRecord | None:
-    data = tomllib.loads(Path(path).read_bytes())
+    data = _load_toml(Path(path))
     for raw in data.get("tenants", []):
         name = raw["name"]
         namespace = raw["namespace"]
