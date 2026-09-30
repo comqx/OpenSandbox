@@ -190,7 +190,8 @@ export function SandboxHistoryPage() {
     <div>
       <Typography.Title level={4}>沙箱 · 申请历史</Typography.Title>
       <Typography.Paragraph type="secondary">
-        PostgreSQL 表 <code>console_sandbox_history</code> 中的持久化记录（与实时 Lifecycle 列表互补）。SDK 直连创建不会自动入库。
+        PostgreSQL 表 <code>sandbox_lifecycle_history</code>（Server 生命周期审计 + Console 扩展）。需 Server 开启{' '}
+        <code>[store.lifecycle_audit]</code> 后 SDK 直连也会入库。
       </Typography.Paragraph>
 
       <Card size="small" style={{ marginBottom: 16 }}>

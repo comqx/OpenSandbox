@@ -34,8 +34,9 @@
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `BFF_HISTORY_ENABLED` | `false` | 启用 `console_sandbox_history` 与 `/api/history/*` |
-| `BFF_HISTORY_DATABASE_URL` | 空 | 可与 Server `[store.postgresql].dsn` **同库**；见 [07-沙箱历史持久化.md](./07-沙箱历史持久化.md) |
+| `BFF_HISTORY_ENABLED` | `false` | 启用 `sandbox_lifecycle_history` 与 `/api/history/*` |
+| `BFF_HISTORY_DATABASE_URL` | 空 | 与 Server `[store.postgresql].dsn` **同库**；见 [07-沙箱历史持久化.md](./07-沙箱历史持久化.md) |
+| `BFF_HISTORY_RECONCILE_ON_READ` | `true` | 打开历史 API 时是否 Lifecycle 全量对账；Server `[store.lifecycle_audit]` 开启后建议 `false` |
 
 集群内 BFF 需 [k8s/console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) 才能 list Pod。归档日志要求 node-agent **sink.type=oss**（file sink 数据在节点 hostPath，BFF 无法统一读）。
 

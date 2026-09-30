@@ -56,7 +56,10 @@ async def list_sandbox_history(
         require_tenant_session(payload)
         tenant_filter = str(payload.get("tenant"))
 
-    if request.query_params.get("reconcile", "true").lower() != "false":
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
         tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
         await reconcile.sync_with_lifecycle(settings, tenants=tenants)
 
@@ -134,7 +137,10 @@ async def history_statistics(
         require_tenant_session(payload)
         tenant_filter = str(payload.get("tenant"))
 
-    if request.query_params.get("reconcile", "true").lower() != "false":
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
         tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
         await reconcile.sync_with_lifecycle(settings, tenants=tenants)
 
@@ -169,7 +175,10 @@ async def image_statistics(
             detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
         )
 
-    if request.query_params.get("reconcile", "true").lower() != "false":
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
         tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
         await reconcile.sync_with_lifecycle(settings, tenants=tenants)
 
@@ -220,7 +229,10 @@ async def usage_allocation(
         require_tenant_session(payload)
         viewer_tenant_only = str(payload.get("tenant"))
 
-    if request.query_params.get("reconcile", "true").lower() != "false":
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
         tenants = reconcile.tenants_for_reconcile(settings, payload, display_tenant or viewer_tenant_only)
         await reconcile.sync_with_lifecycle(settings, tenants=tenants)
 

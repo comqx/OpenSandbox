@@ -32,7 +32,8 @@ from app.runtime import attach_runtime_summary
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_LOCK = "opensandbox-console-sandbox-history"
+_SCHEMA_LOCK = "opensandbox-sandbox-lifecycle-history"
+_HISTORY_TABLE = "sandbox_lifecycle_history"
 _pool: ConnectionPool | None = None
 
 _TERMINAL = frozenset({"Terminated", "Failed", "Stopping"})
@@ -81,7 +82,7 @@ def _ensure_schema(pool: ConnectionPool) -> None:
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_SCHEMA_LOCK,))
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS console_sandbox_history (
+            CREATE TABLE IF NOT EXISTS sandbox_lifecycle_history (
                 sandbox_id TEXT PRIMARY KEY,
                 tenant_name TEXT NOT NULL,
                 namespace TEXT NOT NULL,
@@ -101,27 +102,27 @@ def _ensure_schema(pool: ConnectionPool) -> None:
         )
         conn.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_console_sandbox_history_tenant_created
-                ON console_sandbox_history (tenant_name, lifecycle_created_at DESC NULLS LAST)
+            CREATE INDEX IF NOT EXISTS idx_sandbox_lifecycle_history_tenant_created
+                ON sandbox_lifecycle_history (tenant_name, lifecycle_created_at DESC NULLS LAST)
             """
         )
         conn.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_console_sandbox_history_state
-                ON console_sandbox_history (state)
+            CREATE INDEX IF NOT EXISTS idx_sandbox_lifecycle_history_state
+                ON sandbox_lifecycle_history (state)
             """
         )
         conn.execute(
-            "ALTER TABLE console_sandbox_history ADD COLUMN IF NOT EXISTS cpu_limit TEXT"
+            "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS cpu_limit TEXT"
         )
         conn.execute(
-            "ALTER TABLE console_sandbox_history ADD COLUMN IF NOT EXISTS memory_limit TEXT"
+            "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS memory_limit TEXT"
         )
         conn.execute(
-            "ALTER TABLE console_sandbox_history ADD COLUMN IF NOT EXISTS cpu_cores DOUBLE PRECISION"
+            "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS cpu_cores DOUBLE PRECISION"
         )
         conn.execute(
-            "ALTER TABLE console_sandbox_history ADD COLUMN IF NOT EXISTS memory_gi DOUBLE PRECISION"
+            "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS memory_gi DOUBLE PRECISION"
         )
 
 
@@ -166,7 +167,7 @@ def upsert_from_sandbox(
         existing_cr: dict[str, Any] | None = None
         if create_request is None:
             prev = conn.execute(
-                "SELECT create_request FROM console_sandbox_history WHERE sandbox_id = %s",
+                "SELECT create_request FROM sandbox_lifecycle_history WHERE sandbox_id = %s",
                 (sandbox_id,),
             ).fetchone()
             if prev and prev.get("create_request") is not None:
@@ -189,7 +190,7 @@ def upsert_from_sandbox(
 
         conn.execute(
             """
-            INSERT INTO console_sandbox_history (
+            INSERT INTO sandbox_lifecycle_history (
                 sandbox_id, tenant_name, namespace, state, image_uri,
                 lifecycle_created_at, expires_at, ended_at, wall_clock_seconds,
                 source, create_request, first_recorded_at, last_seen_at,
@@ -203,24 +204,45 @@ def upsert_from_sandbox(
             ON CONFLICT (sandbox_id) DO UPDATE SET
                 tenant_name = EXCLUDED.tenant_name,
                 namespace = EXCLUDED.namespace,
-                state = EXCLUDED.state,
-                image_uri = COALESCE(EXCLUDED.image_uri, console_sandbox_history.image_uri),
-                lifecycle_created_at = COALESCE(
-                    EXCLUDED.lifecycle_created_at, console_sandbox_history.lifecycle_created_at
+                state = CASE
+                    WHEN sandbox_lifecycle_history.deleted_at IS NOT NULL
+                    THEN sandbox_lifecycle_history.state
+                    WHEN sandbox_lifecycle_history.state IN ('Terminated', 'Failed')
+                    THEN sandbox_lifecycle_history.state
+                    ELSE EXCLUDED.state
+                END,
+                image_uri = COALESCE(EXCLUDED.image_uri, sandbox_lifecycle_history.image_uri),
+                lifecycle_created_at = CASE
+                    WHEN sandbox_lifecycle_history.deleted_at IS NOT NULL
+                        OR sandbox_lifecycle_history.state IN ('Terminated', 'Failed')
+                    THEN sandbox_lifecycle_history.lifecycle_created_at
+                    ELSE COALESCE(
+                        EXCLUDED.lifecycle_created_at,
+                        sandbox_lifecycle_history.lifecycle_created_at,
+                    )
+                END,
+                expires_at = COALESCE(
+                    EXCLUDED.expires_at, sandbox_lifecycle_history.expires_at
                 ),
-                expires_at = EXCLUDED.expires_at,
-                ended_at = COALESCE(EXCLUDED.ended_at, console_sandbox_history.ended_at),
-                wall_clock_seconds = COALESCE(EXCLUDED.wall_clock_seconds, console_sandbox_history.wall_clock_seconds),
+                ended_at = COALESCE(EXCLUDED.ended_at, sandbox_lifecycle_history.ended_at),
+                wall_clock_seconds = COALESCE(EXCLUDED.wall_clock_seconds, sandbox_lifecycle_history.wall_clock_seconds),
                 last_seen_at = EXCLUDED.last_seen_at,
                 create_request = COALESCE(
-                    EXCLUDED.create_request, console_sandbox_history.create_request
+                    EXCLUDED.create_request, sandbox_lifecycle_history.create_request
                 ),
-                cpu_limit = COALESCE(EXCLUDED.cpu_limit, console_sandbox_history.cpu_limit),
+                cpu_limit = COALESCE(EXCLUDED.cpu_limit, sandbox_lifecycle_history.cpu_limit),
                 memory_limit = COALESCE(
-                    EXCLUDED.memory_limit, console_sandbox_history.memory_limit
+                    EXCLUDED.memory_limit, sandbox_lifecycle_history.memory_limit
                 ),
-                cpu_cores = COALESCE(EXCLUDED.cpu_cores, console_sandbox_history.cpu_cores),
-                memory_gi = COALESCE(EXCLUDED.memory_gi, console_sandbox_history.memory_gi)
+                cpu_cores = COALESCE(EXCLUDED.cpu_cores, sandbox_lifecycle_history.cpu_cores),
+                memory_gi = COALESCE(EXCLUDED.memory_gi, sandbox_lifecycle_history.memory_gi),
+                source = CASE
+                    WHEN EXCLUDED.source <> 'server-lifecycle' THEN EXCLUDED.source
+                    WHEN sandbox_lifecycle_history.source IS NOT NULL
+                         AND sandbox_lifecycle_history.source <> 'server-lifecycle'
+                    THEN sandbox_lifecycle_history.source
+                    ELSE EXCLUDED.source
+                END
             """,
             (
                 sandbox_id,
@@ -355,7 +377,7 @@ def mark_deleted(
     with _pool.connection() as conn:
         conn.execute(
             """
-            UPDATE console_sandbox_history
+            UPDATE sandbox_lifecycle_history
             SET
                 deleted_at = COALESCE(deleted_at, %s),
                 state = 'Terminated',
@@ -383,7 +405,7 @@ def mark_missing_as_terminated(
     with _pool.connection() as conn:
         rows = conn.execute(
             """
-            SELECT sandbox_id FROM console_sandbox_history
+            SELECT sandbox_id FROM sandbox_lifecycle_history
             WHERE tenant_name = %s
               AND deleted_at IS NULL
               AND (state IS NULL OR state NOT IN ('Terminated', 'Failed', 'Stopping'))
@@ -395,7 +417,7 @@ def mark_missing_as_terminated(
             return 0
         conn.execute(
             """
-            UPDATE console_sandbox_history
+            UPDATE sandbox_lifecycle_history
             SET
                 state = 'Terminated',
                 ended_at = COALESCE(ended_at, %s),
@@ -440,7 +462,7 @@ def list_history(
                 SELECT
                     h.*,
                     (SELECT COUNT(*)::int FROM snapshots s WHERE s.source_sandbox_id = h.sandbox_id) AS snapshot_count
-                FROM console_sandbox_history h
+                FROM sandbox_lifecycle_history h
                 {where}
                 """,
                 params,
@@ -495,7 +517,7 @@ def list_history(
 
     with _pool.connection() as conn:
         total = conn.execute(
-            f"SELECT COUNT(*) AS c FROM console_sandbox_history h {where}",
+            f"SELECT COUNT(*) AS c FROM sandbox_lifecycle_history h {where}",
             params,
         ).fetchone()["c"]
         rows = conn.execute(
@@ -503,7 +525,7 @@ def list_history(
             SELECT
                 h.*,
                 (SELECT COUNT(*)::int FROM snapshots s WHERE s.source_sandbox_id = h.sandbox_id) AS snapshot_count
-            FROM console_sandbox_history h
+            FROM sandbox_lifecycle_history h
             {where}
             ORDER BY COALESCE(h.lifecycle_created_at, h.first_recorded_at) DESC
             LIMIT %s OFFSET %s
@@ -544,7 +566,7 @@ def get_history_record(
             SELECT
                 h.*,
                 (SELECT COUNT(*)::int FROM snapshots s WHERE s.source_sandbox_id = h.sandbox_id) AS snapshot_count
-            FROM console_sandbox_history h
+            FROM sandbox_lifecycle_history h
             {where}
             """,
             params,
@@ -570,7 +592,7 @@ def history_stats(settings: Settings, *, tenant_name: str | None) -> dict[str, A
                 COUNT(*) FILTER (WHERE deleted_at IS NULL AND state NOT IN ('Terminated','Failed','Stopping'))::int AS active_records,
                 COALESCE(SUM(wall_clock_seconds) FILTER (WHERE wall_clock_seconds IS NOT NULL), 0)::bigint AS total_wall_clock_seconds,
                 COALESCE(AVG(wall_clock_seconds) FILTER (WHERE wall_clock_seconds IS NOT NULL), 0)::int AS avg_wall_clock_seconds
-            FROM console_sandbox_history
+            FROM sandbox_lifecycle_history
             {where}
             """,
             params,
@@ -595,7 +617,7 @@ def image_stats(
     period_from: datetime | None = None,
     period_to: datetime | None = None,
 ) -> dict[str, Any]:
-    """Aggregate sandbox counts by base image URI from console_sandbox_history."""
+    """Aggregate sandbox counts by base image URI from sandbox_lifecycle_history."""
     if _pool is None:
         return {"enabled": False, "items": []}
     where_parts = ["1=1"]
@@ -623,7 +645,7 @@ def image_stats(
                 )::int AS active_count,
                 COUNT(DISTINCT tenant_name)::int AS tenant_count,
                 MAX(COALESCE(lifecycle_created_at, first_recorded_at)) AS last_used_at
-            FROM console_sandbox_history
+            FROM sandbox_lifecycle_history
             WHERE {where_sql}
             GROUP BY 1
             ORDER BY sandbox_count DESC, image_uri ASC
@@ -705,7 +727,7 @@ def usage_allocation(
                 lifecycle_created_at, first_recorded_at,
                 ended_at, deleted_at, last_seen_at, wall_clock_seconds,
                 cpu_cores, memory_gi, create_request
-            FROM console_sandbox_history
+            FROM sandbox_lifecycle_history
             WHERE COALESCE(lifecycle_created_at, first_recorded_at) < %s
             """,
             (period_to,),
@@ -815,7 +837,7 @@ def usage_allocation(
         "coverageNote": (
             "沙箱数 = 与统计区间有生命周期交集的 history 条数（与占用时长同一批实例，非实时列表、非申请历史总条数）。"
             "占用时长 = 各沙箱「创建→结束」与区间的交集秒数之和（结束取 ended_at/deleted_at 或已终止 wall_clock，"
-            "不会把已销毁沙箱延续到当前时间）。仅含经 Console 写入 console_sandbox_history 的记录。"
+            "不会把已销毁沙箱延续到当前时间）。统计 sandbox_lifecycle_history 单表（Server 审计 + Console 扩展）。"
         ),
         "shareFormula": {
             "time": "时长占比 = 租户占用秒数 ÷ 区间全集群占用秒数 × 100%",
