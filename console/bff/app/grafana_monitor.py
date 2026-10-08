@@ -23,6 +23,30 @@ from app.k8s_resources import list_workloads, primary_pod_name_for_sandbox
 from app.platform_settings import get_platform_settings
 
 _TERMINAL = frozenset({"Terminated", "Failed", "Stopping"})
+_DEFAULT_DS_VAR = "var-DS_PROM"
+_DEFAULT_DS_UID = "prometheus"
+# Bare Grafana variable names (without the var- URL prefix). A value that is not
+# one of these and was stored in the name field is treated as a datasource UID.
+_BARE_DS_NAMES = frozenset({"ds_prom", "dsprom", "datasource", "prometheus"})
+
+
+def datasource_query_param(cfg: dict[str, Any]) -> tuple[str, str]:
+    """Return ``(var-DS_PROM, uid)`` for the dashboard URL.
+
+    Grafana only applies a datasource when the query key is ``var-<variable>``.
+    A UID pasted into the variable-name setting is used as the value instead.
+    """
+    raw_name = str(cfg.get("varDatasource") or "").strip()
+    raw_uid = str(cfg.get("datasourceUid") or "").strip()
+
+    if raw_name and not raw_name.startswith("var-"):
+        if raw_name.lower() not in _BARE_DS_NAMES and raw_uid in ("", _DEFAULT_DS_UID):
+            raw_uid = raw_name
+            raw_name = _DEFAULT_DS_VAR
+        else:
+            raw_name = f"var-{raw_name}"
+
+    return raw_name or _DEFAULT_DS_VAR, raw_uid or _DEFAULT_DS_UID
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -97,6 +121,8 @@ def build_grafana_dashboard_path(
         (cfg["varNamespace"], namespace),
         ("refresh", cfg["refresh"]),
     ]
+    datasource_var, datasource_uid = datasource_query_param(cfg)
+    params.append((datasource_var, datasource_uid))
     pod_var = cfg["varPod"]
     if pod_names:
         for name in pod_names:
@@ -191,11 +217,14 @@ async def build_sandbox_monitor(
     )
     iframe_url, external_url = build_embed_urls(cfg, dashboard_path, request_base=request_base_url)
 
+    datasource_var, datasource_uid = datasource_query_param(cfg)
     return {
         "enabled": True,
         "embedMode": cfg.get("embedMode"),
         "iframeUrl": iframe_url,
         "externalUrl": external_url,
+        "datasourceVar": datasource_var,
+        "datasourceUid": datasource_uid,
         "namespace": k8s_namespace,
         "tenant": tenant_name,
         "sandboxId": sandbox_id,

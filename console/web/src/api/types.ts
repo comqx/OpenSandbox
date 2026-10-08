@@ -268,6 +268,8 @@ export interface PlatformGrafanaSettings {
   varNamespace?: string;
   varPod?: string;
   varNode?: string;
+  varDatasource?: string;
+  datasourceUid?: string;
   authProxyEnabled?: boolean;
   authProxyUserHeader?: string;
   persisted?: boolean;
@@ -287,6 +289,8 @@ export interface SandboxMonitorResponse {
   embedMode?: string;
   iframeUrl?: string;
   externalUrl?: string;
+  datasourceVar?: string;
+  datasourceUid?: string;
   namespace?: string;
   tenant?: string;
   sandboxId?: string;
