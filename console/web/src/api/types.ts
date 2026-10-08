@@ -257,3 +257,40 @@ export interface ApiErrorBody {
   code?: string;
   message?: string;
 }
+
+export interface PlatformGrafanaSettings {
+  enabled?: boolean;
+  baseUrl?: string;
+  dashboardSlug?: string;
+  dashboardUid?: string;
+  refresh?: string;
+  embedMode?: 'direct' | 'proxy';
+  varNamespace?: string;
+  varPod?: string;
+  varNode?: string;
+  authProxyEnabled?: boolean;
+  authProxyUserHeader?: string;
+  persisted?: boolean;
+  source?: string;
+}
+
+export interface SandboxMonitorPod {
+  name?: string;
+  namespace?: string;
+  nodeName?: string;
+  phase?: string;
+}
+
+export interface SandboxMonitorResponse {
+  enabled?: boolean;
+  message?: string;
+  embedMode?: string;
+  iframeUrl?: string;
+  externalUrl?: string;
+  namespace?: string;
+  tenant?: string;
+  sandboxId?: string;
+  pods?: SandboxMonitorPod[];
+  timeRange?: { from?: string; to?: string };
+  warnings?: string[];
+}

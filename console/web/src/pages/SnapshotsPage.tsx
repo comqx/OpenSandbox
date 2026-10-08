@@ -20,6 +20,7 @@ import { SandboxStateTag } from '../components/SemanticTags';
 import { ApiError, adminApi, sandboxApi, snapshotApi } from '../api/client';
 import type { Snapshot } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { formatDateTime } from '../utils/format';
 
 export function SnapshotsPage() {
   const { user } = useAuth();
@@ -121,7 +122,11 @@ export function SnapshotsPage() {
       title: '状态',
       render: (_, r) => <SandboxStateTag state={r.status?.state} />,
     },
-    { title: '创建时间', dataIndex: 'createdAt' },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      render: (v: string | undefined) => formatDateTime(v),
+    },
     {
       title: '操作',
       render: (_, r) => (

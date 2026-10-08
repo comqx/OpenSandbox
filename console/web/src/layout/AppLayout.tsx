@@ -38,6 +38,7 @@ import './AppLayout.css';
 const { Header, Sider, Content } = Layout;
 
 const PLATFORM_SUBMENU_KEY = 'platform';
+const IMAGE_SUBMENU_KEY = 'image';
 
 function SiderLogo() {
   return (
@@ -87,9 +88,15 @@ export function AppLayout() {
         label: '申请历史',
       },
       {
-        key: '/history/images',
+        key: IMAGE_SUBMENU_KEY,
         icon: <PictureOutlined />,
-        label: '镜像统计',
+        label: '沙箱镜像管理',
+        children: [
+          { key: '/images/list', label: '沙箱镜像列表' },
+          { key: '/history/images', label: '镜像运行统计' },
+          { key: '/history/mirror-accel', label: '镜像加速' },
+          { key: '/images/sandbox-build', label: '沙箱镜像制作' },
+        ],
       },
       {
         key: '/history/usage',
@@ -120,6 +127,7 @@ export function AppLayout() {
         icon: <SettingOutlined />,
         label: '平台',
         children: [
+          ...(isAdmin ? [{ key: '/platform/settings', label: '系统设置' }] : []),
           { key: '/platform/health', label: '组件健康' },
           { key: '/platform/version', label: '版本' },
           { key: '/platform/k8s/workloads', label: 'K8s 工作负载' },
@@ -142,8 +150,8 @@ export function AppLayout() {
     return path;
   }, [location.pathname, isAdmin, sandboxListKey]);
 
-  /** 与参考设计一致：「平台」分组默认展开 */
-  const [openKeys, setOpenKeys] = useState<string[]>([PLATFORM_SUBMENU_KEY]);
+  /** 「平台」「沙箱镜像管理」分组默认展开 */
+  const [openKeys, setOpenKeys] = useState<string[]>([PLATFORM_SUBMENU_KEY, IMAGE_SUBMENU_KEY]);
 
   const brandSubtitle = isAdmin ? 'Admin' : user?.tenant ?? 'Tenant';
   const params = useParams();
@@ -173,7 +181,7 @@ export function AppLayout() {
           onOpenChange={setOpenKeys}
           items={items}
           onClick={({ key }) => {
-            if (key === PLATFORM_SUBMENU_KEY) return;
+            if (key === PLATFORM_SUBMENU_KEY || key === IMAGE_SUBMENU_KEY) return;
             navigate(key);
           }}
         />

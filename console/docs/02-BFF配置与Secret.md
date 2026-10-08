@@ -40,6 +40,25 @@
 
 集群内 BFF 需 [k8s/console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) 才能 list Pod。归档日志要求 node-agent **sink.type=oss**（file sink 数据在节点 hostPath，BFF 无法统一读）。
 
+### 可选：Grafana 沙箱监控嵌入
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `BFF_GRAFANA_ENABLED` | `false` | 启用沙箱详情「监控」Tab |
+| `BFF_GRAFANA_BASE_URL` | 空 | Grafana 根 URL，如 `https://grafana.example.com` |
+| `BFF_GRAFANA_DASHBOARD_SLUG` | `opensandbox-pod-node` | Dashboard URL 段 |
+| `BFF_GRAFANA_DASHBOARD_UID` | 空 | Dashboard UID（如 `711161a`） |
+| `BFF_GRAFANA_REFRESH` | `30s` | 嵌入 refresh 参数 |
+| `BFF_GRAFANA_EMBED_MODE` | `direct` | `direct`（iframe 直连）或 `proxy`（经 BFF `/api/grafana/...` 反代） |
+| `BFF_GRAFANA_VAR_NAMESPACE` | `var-namespace` | Grafana 模板变量名 |
+| `BFF_GRAFANA_VAR_POD` | `var-pod` | 同上 |
+| `BFF_GRAFANA_VAR_NODE` | `var-node` | 同上 |
+| `BFF_GRAFANA_AUTH_PROXY_ENABLED` | `false` | `embedMode=proxy` 时是否发送 Auth Proxy 头 |
+| `BFF_GRAFANA_AUTH_PROXY_USER_HEADER` | `X-WEBAUTH-USER` | 头名称 |
+| `BFF_PLATFORM_SETTINGS_PATH` | 空 | 未启用 history DB 时，Admin UI 覆盖项 JSON 文件路径 |
+
+Admin 可在「平台 → 系统设置」覆盖上述项（持久化需 history 同库 PostgreSQL 或 `BFF_PLATFORM_SETTINGS_PATH`）。**不在 Console 存储 Grafana 登录密码**；内网直连需 Grafana 匿名 Viewer 或用户浏览器已 SSO；反代模式需 Grafana 配置 Auth Proxy。
+
 ## tenants.toml 来源（与 Server 同源）
 
 1. 维护 ConfigMap `opensandbox-tenants` 中 `data.tenants.toml`（结构见 [k8s/tenants-configmap.example.yaml](../k8s/tenants-configmap.example.yaml)）。

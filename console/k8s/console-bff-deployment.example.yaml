@@ -21,6 +21,9 @@ spec:
           ports:
             - containerPort: 8091
           env:
+            # 仅影响容器内日志/默认 locale；API 与前端展示时间仍按 UTC 处理
+            - name: TZ
+              value: "UTC"
             - name: LIFECYCLE_API_BASE
               value: "http://opensandbox-server:8090/v1"
             - name: TENANTS_TOML_PATH

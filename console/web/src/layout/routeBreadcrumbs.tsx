@@ -25,6 +25,7 @@ function shortId(id: string, max = 12): string {
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
+  '/platform/settings': '系统设置',
   '/platform/health': '组件健康',
   '/platform/version': '版本',
   '/platform/k8s/workloads': 'K8s 工作负载',
@@ -65,8 +66,22 @@ export function buildRouteBreadcrumbs(
     return [home, { title: '申请历史' }];
   }
 
+  const imageGroup = { title: '沙箱镜像管理' };
+
+  if (pathname === '/images/list') {
+    return [home, imageGroup, { title: '沙箱镜像列表' }];
+  }
+
   if (pathname === '/history/images') {
-    return [home, { title: '镜像统计' }];
+    return [home, imageGroup, { title: '镜像运行统计' }];
+  }
+
+  if (pathname === '/history/mirror-accel') {
+    return [home, imageGroup, { title: '镜像加速' }];
+  }
+
+  if (pathname === '/images/sandbox-build') {
+    return [home, imageGroup, { title: '沙箱镜像制作' }];
   }
 
   if (pathname === '/history/usage') {

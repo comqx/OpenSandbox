@@ -23,6 +23,7 @@ import { ApiError, historyApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
 import type { ImageStatsRow } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { formatDateTime } from '../utils/format';
 import { currentMonthRangeUtc, monthRangeToUsageQuery } from '../utils/usagePeriod';
 
 dayjs.extend(utc);
@@ -124,7 +125,7 @@ export function SandboxImageStatsPage() {
         title: '最近使用',
         dataIndex: 'lastUsedAt',
         width: 200,
-        render: (v: string | undefined) => v ?? '—',
+        render: (v: string | undefined) => formatDateTime(v),
       },
     ],
     [isAdmin, tenantFilter],
@@ -135,7 +136,7 @@ export function SandboxImageStatsPage() {
       <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} align="start">
         <div>
           <Typography.Title level={4} style={{ margin: 0 }}>
-            镜像统计
+            镜像运行统计
           </Typography.Title>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
             按 Console 历史库中的 <code>image_uri</code> 汇总，反映各租户曾使用的沙箱基础镜像（与实时 Lifecycle 列表互补）。

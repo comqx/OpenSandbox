@@ -19,10 +19,11 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { adminApi, ApiError, historyApi, sandboxApi } from '../api/client';
 import { SandboxArchiveLogPanel } from '../components/SandboxArchiveLogPanel';
 import { SandboxLogPanel } from '../components/SandboxLogPanel';
+import { SandboxMonitorPanel } from '../components/SandboxMonitorPanel';
 import { SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import type { Sandbox, SandboxHistoryItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
-import { formatDuration, sandboxDisplayName } from '../utils/format';
+import { formatDateTime, formatDuration, sandboxDisplayName } from '../utils/format';
 
 export function SandboxDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,7 +32,9 @@ export function SandboxDetailPage() {
   const { user } = useAuth();
   const adminTenant = searchParams.get('tenant') ?? '';
   const isAdminProxy = user?.role === 'admin' && Boolean(adminTenant);
-  const defaultTab = searchParams.get('tab') === 'logs' ? 'logs' : 'overview';
+  const tabParam = searchParams.get('tab');
+  const defaultTab =
+    tabParam === 'logs' ? 'logs' : tabParam === 'monitor' ? 'monitor' : 'overview';
   const [sandbox, setSandbox] = useState<Sandbox | null>(null);
   const [historyRecord, setHistoryRecord] = useState<SandboxHistoryItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -237,16 +240,6 @@ export function SandboxDetailPage() {
         {isAdminProxy && <TenantTag tenant={adminTenant} />}
       </Space>
 
-      {historyOnly && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="沙箱已从 Lifecycle 移除"
-          description="以下为 PostgreSQL 申请历史中的持久化信息；归档日志仍可查看（若 Node Agent 已保留）。"
-        />
-      )}
-
       <Tabs
         defaultActiveKey={defaultTab}
         items={[
@@ -268,15 +261,27 @@ export function SandboxDetailPage() {
                             ? formatDuration(historyRecord.wallClockSeconds)
                             : '—'}
                         </Descriptions.Item>
-                        <Descriptions.Item label="创建时间">{historyRecord.createdAt ?? '—'}</Descriptions.Item>
-                        <Descriptions.Item label="过期时间">{historyRecord.expiresAt ?? '—'}</Descriptions.Item>
-                        <Descriptions.Item label="结束时间">{historyRecord.endedAt ?? '—'}</Descriptions.Item>
-                        <Descriptions.Item label="删除时间">{historyRecord.deletedAt ?? '—'}</Descriptions.Item>
+                        <Descriptions.Item label="创建时间">
+                          {formatDateTime(historyRecord.createdAt)}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="过期时间">
+                          {formatDateTime(historyRecord.expiresAt)}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="结束时间">
+                          {formatDateTime(historyRecord.endedAt)}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="删除时间">
+                          {formatDateTime(historyRecord.deletedAt)}
+                        </Descriptions.Item>
                         <Descriptions.Item label="镜像">{historyRecord.imageUri ?? '—'}</Descriptions.Item>
                         <Descriptions.Item label="快照数">{historyRecord.snapshotCount ?? 0}</Descriptions.Item>
                         <Descriptions.Item label="来源">{historyRecord.source ?? '—'}</Descriptions.Item>
-                        <Descriptions.Item label="首次入库">{historyRecord.firstRecordedAt ?? '—'}</Descriptions.Item>
-                        <Descriptions.Item label="最后同步">{historyRecord.lastSeenAt ?? '—'}</Descriptions.Item>
+                        <Descriptions.Item label="首次入库">
+                          {formatDateTime(historyRecord.firstRecordedAt)}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="最后同步">
+                          {formatDateTime(historyRecord.lastSeenAt)}
+                        </Descriptions.Item>
                       </Descriptions>
                     ) : (
                       <>
@@ -292,7 +297,12 @@ export function SandboxDetailPage() {
                               ? formatDuration(sandbox.runtimeSummary.remainingSeconds)
                               : '—'}
                           </Descriptions.Item>
-                          <Descriptions.Item label="expiresAt">{sandbox?.expiresAt ?? '—'}</Descriptions.Item>
+                          <Descriptions.Item label="过期时间">
+                            {formatDateTime(sandbox?.expiresAt)}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="创建时间">
+                            {formatDateTime(sandbox?.createdAt)}
+                          </Descriptions.Item>
                           <Descriptions.Item label="镜像">{sandbox?.image?.uri ?? '—'}</Descriptions.Item>
                           <Descriptions.Item label="entrypoint">
                             {sandbox?.entrypoint?.join(' ') ?? '—'}
@@ -353,6 +363,11 @@ export function SandboxDetailPage() {
                 )}
               </Row>
             ),
+          },
+          {
+            key: 'monitor',
+            label: '监控',
+            children: <SandboxMonitorPanel sandboxId={id} tenant={logTenant} />,
           },
           {
             key: 'logs',

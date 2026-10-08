@@ -26,6 +26,9 @@ import { PoolsPage } from './pages/PoolsPage';
 import { SandboxCreatePage } from './pages/SandboxCreatePage';
 import { SandboxDetailPage } from './pages/SandboxDetailPage';
 import { SandboxHistoryPage } from './pages/SandboxHistoryPage';
+import { MirrorAccelPage } from './pages/MirrorAccelPage';
+import { SandboxImageBuildPage } from './pages/SandboxImageBuildPage';
+import { SandboxImageListPage } from './pages/SandboxImageListPage';
 import { SandboxImageStatsPage } from './pages/SandboxImageStatsPage';
 import { TenantUsagePage } from './pages/TenantUsagePage';
 import { SandboxListPage } from './pages/SandboxListPage';
@@ -33,6 +36,7 @@ import { SnapshotsPage } from './pages/SnapshotsPage';
 import { ComponentHealthPage } from './pages/platform/ComponentHealthPage';
 import { K8sEventsPage } from './pages/platform/K8sEventsPage';
 import { K8sWorkloadsPage } from './pages/platform/K8sWorkloadsPage';
+import { SystemSettingsPage } from './pages/platform/SystemSettingsPage';
 import { VersionPage } from './pages/platform/VersionPage';
 
 const consoleTheme = {
@@ -78,13 +82,17 @@ export default function App() {
               <Route path="sandboxes" element={<SandboxListPage />} />
               <Route path="sandboxes/new" element={<SandboxCreatePage />} />
               <Route path="history/sandboxes" element={<SandboxHistoryPage />} />
+              <Route path="images/list" element={<SandboxImageListPage />} />
               <Route path="history/images" element={<SandboxImageStatsPage />} />
+              <Route path="history/mirror-accel" element={<MirrorAccelPage />} />
+              <Route path="images/sandbox-build" element={<SandboxImageBuildPage />} />
               <Route path="history/usage" element={<TenantUsagePage />} />
               <Route path="sandboxes/:id" element={<SandboxDetailPage />} />
               <Route path="admin/sandboxes" element={<AdminSandboxesPage />} />
               <Route path="snapshots" element={<SnapshotsPage />} />
               <Route path="pools" element={<PoolsPage />} />
               <Route path="diagnostics" element={<DiagnosticsPage />} />
+              <Route path="platform/settings" element={<SystemSettingsPage />} />
               <Route path="platform/health" element={<ComponentHealthPage />} />
               <Route path="platform/version" element={<VersionPage />} />
               <Route path="platform/k8s/workloads" element={<K8sWorkloadsPage />} />

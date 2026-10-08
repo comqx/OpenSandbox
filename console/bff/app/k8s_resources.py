@@ -24,6 +24,24 @@ from app.tenants import load_tenants
 SANDBOX_ID_LABEL = "opensandbox.io/id"
 
 
+def primary_pod_name_for_sandbox(sandbox_id: str) -> str:
+    """BatchSandbox / fast-sandbox Pod 名：`<sandboxId>-0`。"""
+    sid = sandbox_id.strip()
+    if sid.endswith("-0"):
+        return sid
+    return f"{sid}-0"
+
+
+def pod_name_candidates_for_sandbox(sandbox_id: str) -> list[str]:
+    sid = sandbox_id.strip()
+    if not sid:
+        return []
+    primary = primary_pod_name_for_sandbox(sid)
+    if primary == sid:
+        return [sid]
+    return [primary, sid]
+
+
 def _target_namespaces(settings: Settings, tenant_filter: str | None) -> list[tuple[str, str]]:
     tenants = load_tenants(settings.tenants_toml_path)
     if tenant_filter:
@@ -73,12 +91,25 @@ def _list_workloads_sync(
         if sandbox_id:
             label_selector = f"{SANDBOX_ID_LABEL}={sandbox_id}"
         pods = v1.list_namespaced_pod(namespace=namespace, label_selector=label_selector, limit=limit)
+        matched = 0
         for pod in pods.items:
             if sandbox_id and (pod.metadata.labels or {}).get(SANDBOX_ID_LABEL) != sandbox_id:
                 continue
             rows.append(_pod_row(pod, tenant_name, namespace))
+            matched += 1
             if len(rows) >= limit:
                 return rows
+        # Pod 名多为 `<sandboxId>-0`，且未必带 opensandbox.io/id 标签
+        if sandbox_id and matched == 0:
+            for pod_name in pod_name_candidates_for_sandbox(sandbox_id):
+                try:
+                    pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                except Exception:
+                    continue
+                rows.append(_pod_row(pod, tenant_name, namespace))
+                if len(rows) >= limit:
+                    return rows
+                break
     return rows
 
 

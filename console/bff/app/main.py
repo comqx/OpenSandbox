@@ -20,7 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.lifecycle import LifecycleClient
 from app.history.store import close_history_pool, init_history_pool
-from app.routes import admin, auth, history, pools, sandboxes, snapshots
+from app.platform_settings import init_platform_settings
+from app.routes import admin, auth, history, platform, pools, sandboxes, snapshots
 
 app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
 
@@ -33,6 +34,7 @@ def validate_config() -> None:
     if not settings.bff_session_secret or not settings.bff_admin_token:
         raise RuntimeError("BFF_SESSION_SECRET and BFF_ADMIN_TOKEN are required")
     init_history_pool(settings)
+    init_platform_settings(settings)
 
 
 @app.on_event("shutdown")
@@ -67,4 +69,6 @@ api.include_router(snapshots.router)
 api.include_router(pools.router)
 api.include_router(admin.router)
 api.include_router(history.router)
+api.include_router(platform.router)
+api.include_router(platform.admin_router)
 app.mount("/api", api)

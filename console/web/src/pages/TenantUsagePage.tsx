@@ -14,6 +14,8 @@
 
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Col, Row, Space, Statistic, Table, Typography } from 'antd';
+
+import { DismissibleAlert } from '../components/DismissibleAlert';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs, { type Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
@@ -160,7 +162,8 @@ export function TenantUsagePage() {
       </Typography.Paragraph>
 
       {data?.shareFormula?.composite ? (
-        <Alert
+        <DismissibleAlert
+          dismissKey="usage-share-formula"
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
@@ -169,7 +172,13 @@ export function TenantUsagePage() {
         />
       ) : null}
       {data?.coverageNote ? (
-        <Alert type="info" showIcon message={data.coverageNote} style={{ marginBottom: 16 }} />
+        <DismissibleAlert
+          dismissKey="usage-coverage-note"
+          type="info"
+          showIcon
+          message={data.coverageNote}
+          style={{ marginBottom: 16 }}
+        />
       ) : null}
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
 
