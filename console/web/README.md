@@ -1,49 +1,42 @@
 # OpenSandbox Console Web
 
-React + Vite + Ant Design SPA，通过 BFF（`/api`，cookie 会话）访问 Lifecycle，不持有 API Key。
+React + Vite + Ant Design SPA. Talks to the BFF at `/api` with cookie sessions; **no Lifecycle API key in the browser**.
 
-## 开发
+## Development
 
-终端 1 — BFF（见 [../README.md](../README.md)）：
+Terminal 1 — BFF ([../README.md](../README.md)):
 
 ```bash
 cd ../bff && source .venv/bin/activate
 uvicorn app.main:app --reload --port 8091
 ```
 
-终端 2 — 前端：
+Terminal 2 — Web:
 
 ```bash
 npm install
 npm run dev
 ```
 
-浏览器打开 Vite 提示的地址（默认 `http://localhost:5173`）。`/login` 支持 **租户 API Key** 与 **Admin Token** 两个 Tab。
+Open the Vite URL (default `http://localhost:5173`). Sign in at `/login` (tenant API key or admin token).
 
-## 构建
+## Build
 
 ```bash
 npm run build
 ```
 
-产物在 `dist/`，可由 Ingress 或与 BFF 同域静态托管。
+Output in `dist/`; serve via nginx or ingress (same origin as BFF recommended).
 
-## 路由与阶段
+## Routes (summary)
 
-| 路径 | 一期 | 二期 | 说明 |
-|------|------|------|------|
-| `/` | ✓ | ✓ | 概览 KPI（租户 / Admin） |
-| `/sandboxes` | ✓ | | 租户沙箱列表 |
-| `/sandboxes/new` | ✓ | | 创建 |
-| `/sandboxes/:id` | ✓ | | 详情、续期、endpoint、pause/resume |
-| `/history/sandboxes` | ✓ | | 申请历史 |
-| `/images/list` | ✓ | | 沙箱镜像管理 → 沙箱镜像列表（演示数据） |
-| `/history/images` | ✓ | | 沙箱镜像管理 → 镜像运行统计（历史库） |
-| `/history/mirror-accel` | ✓ | | 沙箱镜像管理 → 镜像加速（静态展示） |
-| `/images/sandbox-build` | ✓ | | 沙箱镜像管理 → 沙箱镜像制作（四步流程占位） |
-| `/history/usage` | ✓ | | 用量分摊 |
-| `/admin/sandboxes` | | ✓ | Admin 全局列表 |
-| `/snapshots` | | ✓ | 列表 / 删除 / 从沙箱创建 |
-| `/pools` | | ✓ | Admin；Pool 非租户隔离提示 |
-| `/diagnostics` | | ✓ | logs / events |
-| `/platform/*` | | ✓ | 健康、版本；K8s 页为 RBAC 占位 |
+| Path | Notes |
+|------|--------|
+| `/` | Overview KPIs |
+| `/sandboxes`, `/sandboxes/new`, `/sandboxes/:id` | Tenant lifecycle |
+| `/history/*`, `/images/*` | History and image tooling |
+| `/admin/sandboxes` | Admin global list |
+| `/snapshots`, `/pools`, `/diagnostics` | Phase 2 ops |
+| `/platform/*` | Health, version, K8s, settings |
+
+Full matrix: [../docs/05-feature-matrix.md](../docs/05-feature-matrix.md).
