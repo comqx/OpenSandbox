@@ -24,8 +24,10 @@ import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../compone
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
 import type { SandboxHistoryItem, SandboxHistoryStats } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
-import { formatDuration } from '../utils/format';
+import { formatDateTime, formatDuration } from '../utils/format';
 import { currentMonthRangeUtc, monthRangeToUsageQuery, usageQueryToDayRange } from '../utils/usagePeriod';
+
+const HISTORY_PAGE_SIZE = 20;
 
 export function SandboxHistoryPage() {
   const { user } = useAuth();
@@ -78,14 +80,14 @@ export function SandboxHistoryPage() {
         const [list, st] = await Promise.all([
           historyApi.listSandboxes({
             page,
-            pageSize: 20,
+            pageSize: HISTORY_PAGE_SIZE,
             ...(tenant ? { tenant } : {}),
             ...periodQuery,
           }),
           periodActive ? Promise.resolve({ enabled: true } as SandboxHistoryStats) : historyApi.stats(tenant),
         ]);
         setItems(list.items ?? []);
-        setTotalItems(list.pagination?.totalItems ?? list.items?.length ?? 0);
+        setTotalItems(list.pagination?.totalItems ?? 0);
         setStats(periodActive ? null : st);
       } catch (e) {
         setError(e instanceof Error ? e.message : '加载历史失败');
@@ -161,8 +163,17 @@ export function SandboxHistoryPage() {
       width: 120,
       render: (v: number | undefined) => (v != null ? formatDuration(v) : '—'),
     },
-    { title: '创建时间', dataIndex: 'createdAt', width: 180 },
-    { title: '结束/删除', dataIndex: 'endedAt', width: 180, render: (_, r) => r.endedAt ?? r.deletedAt ?? '—' },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      width: 200,
+      render: (v: string | undefined) => formatDateTime(v),
+    },
+    {
+      title: '结束/删除',
+      width: 200,
+      render: (_, r) => formatDateTime(r.endedAt ?? r.deletedAt),
+    },
     {
       title: '快照数',
       dataIndex: 'snapshotCount',
@@ -190,8 +201,9 @@ export function SandboxHistoryPage() {
     <div>
       <Typography.Title level={4}>沙箱 · 申请历史</Typography.Title>
       <Typography.Paragraph type="secondary">
-        PostgreSQL 表 <code>sandbox_lifecycle_history</code>（Server 生命周期审计 + Console 扩展）。需 Server 开启{' '}
-        <code>[store.lifecycle_audit]</code> 后 SDK 直连也会入库。
+        启用：BFF 配置 <code>BFF_HISTORY_ENABLED=true</code> 且 <code>BFF_HISTORY_DATABASE_URL</code> 与 Server
+        同库；SDK 直连创建也要入库时，在 Server 打开 <code>[store.lifecycle_audit] enabled = true</code>（需
+        PostgreSQL）。
       </Typography.Paragraph>
 
       <Card size="small" style={{ marginBottom: 16 }}>
@@ -246,10 +258,12 @@ export function SandboxHistoryPage() {
         scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
-          pageSize: 20,
+          pageSize: HISTORY_PAGE_SIZE,
           total: totalItems,
+          hideOnSinglePage: false,
+          showSizeChanger: false,
           onChange: (p) => setPage(p),
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (t) => `共 ${t} 条，每页 ${HISTORY_PAGE_SIZE} 条`,
         }}
       />
     </div>

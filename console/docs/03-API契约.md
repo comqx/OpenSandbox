@@ -52,6 +52,7 @@ Base path：`/api`。除登录与健康检查外，需 cookie session。
 | GET | `/api/sandboxes/{id}/diagnostics/events` | 同上 |
 | GET | `/api/sandboxes/{id}/logs/archive` | node-agent OSS 归档（可选；query `maxBytes`） |
 | GET | `/api/sandboxes/{id}/endpoints/{port}` | 同名 |
+| GET | `/api/sandboxes/{id}/monitor` | BFF 拼 Grafana 嵌入 URL（本租户 namespace + Pod） |
 
 ### 快照（role=tenant）
 
@@ -108,7 +109,14 @@ Query 与 Lifecycle list 相同（`state`, `page`, `pageSize`, …）。
 
 ### Admin 沙箱 CRUD（代发租户 Key）
 
-Query **`tenant`** 必填：`GET/DELETE /api/admin/sandboxes/{id}`，`POST .../renew-expiration|pause|resume`，`GET .../endpoints/{port}`，`POST .../snapshots`。
+Query **`tenant`** 必填：`GET/DELETE /api/admin/sandboxes/{id}`，`POST .../renew-expiration|pause|resume`，`GET .../endpoints/{port}`，`POST .../snapshots`，`GET .../monitor`（Grafana 嵌入）。
+
+### Admin 系统设置（Grafana）
+
+`GET /api/admin/platform/settings` — 当前 Grafana 配置（env 默认 + 持久化覆盖）。  
+`PATCH /api/admin/platform/settings` — 更新（需 PostgreSQL 或 `BFF_PLATFORM_SETTINGS_PATH`）。
+
+`GET|HEAD|POST /api/grafana/d/...` — `embedMode=proxy` 时 iframe 同源反代（需 session）。
 
 ### Admin 快照
 

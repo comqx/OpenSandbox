@@ -124,6 +124,56 @@ def _ensure_schema(pool: ConnectionPool) -> None:
         conn.execute(
             "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS memory_gi DOUBLE PRECISION"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS console_platform_settings (
+                id TEXT PRIMARY KEY,
+                settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+
+
+def history_pool_available() -> bool:
+    return _pool is not None
+
+
+def load_platform_settings_from_db() -> dict[str, Any]:
+    if _pool is None:
+        return {}
+    with _pool.connection() as conn:
+        row = conn.execute(
+            "SELECT settings FROM console_platform_settings WHERE id = %s",
+            ("default",),
+        ).fetchone()
+    if not row:
+        return {}
+    settings = row["settings"]
+    if isinstance(settings, dict):
+        return settings
+    if isinstance(settings, str):
+        try:
+            parsed = json.loads(settings)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def save_platform_settings_to_db(overrides: dict[str, Any]) -> None:
+    if _pool is None:
+        raise RuntimeError("History pool not initialized")
+    with _pool.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO console_platform_settings (id, settings, updated_at)
+            VALUES ('default', %s::jsonb, NOW())
+            ON CONFLICT (id) DO UPDATE
+            SET settings = EXCLUDED.settings, updated_at = NOW()
+            """,
+            (json.dumps(overrides),),
+        )
 
 
 def _image_uri(sandbox: dict[str, Any]) -> str | None:

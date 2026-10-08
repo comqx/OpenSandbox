@@ -21,7 +21,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { sandboxApi } from '../api/client';
 import type { Sandbox } from '../api/types';
 import { SandboxStateTag } from '../components/SemanticTags';
-import { formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
+import { formatDateTime, formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
 
 export function SandboxListPage() {
   const navigate = useNavigate();
@@ -78,6 +78,7 @@ export function SandboxListPage() {
       title: '创建时间',
       dataIndex: 'createdAt',
       width: 200,
+      render: (v: string | undefined) => formatDateTime(v),
     },
     {
       title: '操作',

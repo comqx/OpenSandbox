@@ -18,7 +18,9 @@ import type {
   K8sEventRow,
   K8sListResponse,
   K8sWorkloadRow,
+  PlatformGrafanaSettings,
   PlatformSummary,
+  SandboxMonitorResponse,
   PoolListResponse,
   PoolItem,
   RuntimeStats,
@@ -262,6 +264,10 @@ export const adminApi = {
       `/api/admin/k8s/workloads${qs ? `?${qs}` : ''}`,
     );
   },
+  sandboxMonitor: (sandboxId: string, tenant: string) =>
+    apiRequest<SandboxMonitorResponse>(
+      `/api/admin/sandboxes/${encodeURIComponent(sandboxId)}/monitor?tenant=${encodeURIComponent(tenant)}`,
+    ),
   k8sEvents: (query: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
     Object.entries(query).forEach(([k, v]) => {
@@ -301,6 +307,22 @@ export const poolApi = {
 export const platformApi = {
   version: () => apiRequest<Record<string, unknown>>('/api/version'),
   bffHealth: () => apiRequest<{ status: string }>('/health'),
+};
+
+export const platformSettingsApi = {
+  get: () => apiRequest<PlatformGrafanaSettings>('/api/admin/platform/settings'),
+  update: (body: Partial<PlatformGrafanaSettings>) =>
+    apiRequest<PlatformGrafanaSettings>('/api/admin/platform/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+};
+
+export const monitorApi = {
+  getSandboxMonitor: (sandboxId: string) =>
+    apiRequest<SandboxMonitorResponse>(
+      `/api/sandboxes/${encodeURIComponent(sandboxId)}/monitor`,
+    ),
 };
 
 export const historyApi = {

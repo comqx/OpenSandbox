@@ -36,6 +36,12 @@ npm run build
 | `/sandboxes` | ✓ | | 租户沙箱列表 |
 | `/sandboxes/new` | ✓ | | 创建 |
 | `/sandboxes/:id` | ✓ | | 详情、续期、endpoint、pause/resume |
+| `/history/sandboxes` | ✓ | | 申请历史 |
+| `/images/list` | ✓ | | 沙箱镜像管理 → 沙箱镜像列表（演示数据） |
+| `/history/images` | ✓ | | 沙箱镜像管理 → 镜像运行统计（历史库） |
+| `/history/mirror-accel` | ✓ | | 沙箱镜像管理 → 镜像加速（静态展示） |
+| `/images/sandbox-build` | ✓ | | 沙箱镜像管理 → 沙箱镜像制作（四步流程占位） |
+| `/history/usage` | ✓ | | 用量分摊 |
 | `/admin/sandboxes` | | ✓ | Admin 全局列表 |
 | `/snapshots` | | ✓ | 列表 / 删除 / 从沙箱创建 |
 | `/pools` | | ✓ | Admin；Pool 非租户隔离提示 |

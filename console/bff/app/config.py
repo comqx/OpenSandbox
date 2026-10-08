@@ -58,6 +58,21 @@ class Settings(BaseSettings):
     # Lifecycle list reconcile on history API reads (optional; Server [store.lifecycle_audit] is primary)
     bff_history_reconcile_on_read: bool = True
 
+    # Grafana embed (Console sandbox monitor + Admin system settings)
+    bff_grafana_enabled: bool = False
+    bff_grafana_base_url: str = ""
+    bff_grafana_dashboard_slug: str = "opensandbox-pod-node"
+    bff_grafana_dashboard_uid: str = ""
+    bff_grafana_refresh: str = "30s"
+    bff_grafana_embed_mode: str = "direct"
+    bff_grafana_var_namespace: str = "var-namespace"
+    bff_grafana_var_pod: str = "var-pod"
+    bff_grafana_var_node: str = "var-node"
+    bff_grafana_auth_proxy_enabled: bool = False
+    bff_grafana_auth_proxy_user_header: str = "X-WEBAUTH-USER"
+    # Optional JSON file when history DB is disabled (Admin PATCH persistence)
+    bff_platform_settings_path: str = ""
+
     @property
     def cors_origins_list(self) -> list[str]:
         if self.bff_cors_origins.strip() == "*":
