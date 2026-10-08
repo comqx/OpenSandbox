@@ -32,30 +32,7 @@
 
 In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) to list pods. Archive logs require node-agent **OSS sink** (file sink on hostPath is not readable cluster-wide).
 
-### Optional: sandbox history (PostgreSQL)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BFF_HISTORY_ENABLED` | `false` | Enable `sandbox_lifecycle_history` and `/api/history/*` |
-| `BFF_HISTORY_DATABASE_URL` | empty | Same DB as server `[store.postgresql]`; see [07-sandbox-history.md](./07-sandbox-history.md) |
-| `BFF_HISTORY_RECONCILE_ON_READ` | `true` | Lifecycle reconcile on history reads; set `false` when server `[store.lifecycle_audit]` is enabled |
-
-### Optional: Grafana sandbox monitor
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BFF_GRAFANA_ENABLED` | `false` | Sandbox detail **Monitor** tab |
-| `BFF_GRAFANA_BASE_URL` | empty | e.g. `https://grafana.example.com` |
-| `BFF_GRAFANA_DASHBOARD_SLUG` | `opensandbox-pod-node` | Dashboard URL segment |
-| `BFF_GRAFANA_DASHBOARD_UID` | empty | Dashboard UID |
-| `BFF_GRAFANA_REFRESH` | `30s` | Embed refresh query param |
-| `BFF_GRAFANA_EMBED_MODE` | `direct` | `direct` iframe or `proxy` via BFF `/api/grafana/...` |
-| `BFF_GRAFANA_VAR_*` | see `.env.example` | Template variable names |
-| `BFF_GRAFANA_DATASOURCE_UID` | `prometheus` | Datasource name/UID |
-| `BFF_GRAFANA_AUTH_PROXY_*` | | Proxy mode headers |
-| `BFF_PLATFORM_SETTINGS_PATH` | empty | JSON overrides when history DB is off |
-
-Admins can override Grafana settings in **Platform → System settings** (PostgreSQL or `BFF_PLATFORM_SETTINGS_PATH`). The console does **not** store Grafana passwords.
+Future optional features (history PostgreSQL, Grafana monitor) are documented in [07-sandbox-history.md](./07-sandbox-history.md) and tracked on branch `feat/console-extended-scope`, not in the MVP PR.
 
 ## `tenants.toml` source
 

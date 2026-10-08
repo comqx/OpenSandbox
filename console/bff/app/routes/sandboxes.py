@@ -24,7 +24,6 @@ from app.lifecycle import LifecycleClient
 from app.runtime import attach_runtime_summary
 from app.routes.proxy_utils import passthrough_json
 from app.nodeagent_archive import fetch_archive_logs
-from app.history import tasks as history_tasks
 from app.routes.session_keys import tenant_api_key, tenant_namespace_for_session
 
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
@@ -45,10 +44,7 @@ async def list_sandboxes(
     )
     data = await passthrough_json(resp)
     if isinstance(data, dict) and "items" in data:
-        enriched = [attach_runtime_summary(item) for item in data["items"]]
-        data["items"] = enriched
-        for item in enriched:
-            history_tasks.schedule_upsert(payload, item)
+        data["items"] = [attach_runtime_summary(item) for item in data["items"]]
     return data
 
 
@@ -62,9 +58,7 @@ async def get_sandbox(
     resp = await client.request(tenant_api_key(payload), "GET", f"/sandboxes/{sandbox_id}")
     data = await passthrough_json(resp)
     if isinstance(data, dict):
-        enriched = attach_runtime_summary(data)
-        history_tasks.schedule_upsert(payload, enriched)
-        return enriched
+        return attach_runtime_summary(data)
     return data
 
 
@@ -78,9 +72,7 @@ async def create_sandbox(
     resp = await client.request(tenant_api_key(payload), "POST", "/sandboxes", json_body=body)
     data = await passthrough_json(resp)
     if isinstance(data, dict):
-        enriched = attach_runtime_summary(data)
-        history_tasks.schedule_upsert(payload, enriched, create_request=body)
-        return enriched
+        return attach_runtime_summary(data)
     return data
 
 
@@ -91,21 +83,7 @@ async def delete_sandbox(
 ) -> Any:
     require_tenant_session(payload)
     client = LifecycleClient(get_settings())
-    api_key = tenant_api_key(payload)
-    final_sandbox: dict | None = None
-    get_resp = await client.request(api_key, "GET", f"/sandboxes/{sandbox_id}")
-    if get_resp.status_code < 400:
-        try:
-            final_sandbox = get_resp.json()
-        except Exception:
-            final_sandbox = None
-    resp = await client.request(api_key, "DELETE", f"/sandboxes/{sandbox_id}")
-    history_tasks.schedule_mark_deleted(
-        sandbox_id,
-        tenant=str(payload.get("tenant") or ""),
-        namespace=str(payload.get("namespace") or ""),
-        final_sandbox=final_sandbox if isinstance(final_sandbox, dict) else None,
-    )
+    resp = await client.request(tenant_api_key(payload), "DELETE", f"/sandboxes/{sandbox_id}")
     return await passthrough_json(resp)
 
 
@@ -125,9 +103,7 @@ async def renew_sandbox(
     )
     data = await passthrough_json(resp)
     if isinstance(data, dict):
-        enriched = attach_runtime_summary(data)
-        history_tasks.schedule_upsert(payload, enriched)
-        return enriched
+        return attach_runtime_summary(data)
     return data
 
 

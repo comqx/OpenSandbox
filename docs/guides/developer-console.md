@@ -22,7 +22,7 @@ This guide is the **published entry point**. Detailed BFF configuration, API not
 [OSEP-0006](../community/oseps.md) describes a phased console and server-side auth. The in-tree implementation is a **BFF adjunct**:
 
 - Tenant **API keys** and **`BFF_ADMIN_TOKEN`** stay on the server/BFF; the SPA uses **httpOnly cookies**.
-- Optional **`store.lifecycle_audit`** on the lifecycle server ([`server/configuration.md`](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md)) can write PostgreSQL history rows consumed by the console BFF.
+- **Sandbox history / usage analytics** (PostgreSQL) are planned for a later release; the MVP console uses the Lifecycle API only. See [console/docs/07-sandbox-history.md](https://github.com/opensandbox-group/OpenSandbox/blob/main/console/docs/07-sandbox-history.md).
 
 ## High-level layout
 

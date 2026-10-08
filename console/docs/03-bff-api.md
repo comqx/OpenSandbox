@@ -47,7 +47,6 @@ Proxies Lifecycle; responses include BFF **`runtimeSummary`**.
 | GET | `/api/sandboxes/{id}/diagnostics/events` | same |
 | GET | `/api/sandboxes/{id}/logs/archive` | optional OSS archive |
 | GET | `/api/sandboxes/{id}/endpoints/{port}` | same |
-| GET | `/api/sandboxes/{id}/monitor` | Grafana embed URL |
 
 ### Snapshots (tenant)
 
@@ -76,13 +75,7 @@ Aggregates per-tenant lists; optional `tenant=` filter. Pagination includes `ten
 
 ### Admin sandbox ops
 
-Query **`tenant`** required for `{id}` read/write, diagnostics, monitor, etc.
-
-### Platform settings (Grafana)
-
-- `GET /api/admin/platform/settings`
-- `PATCH /api/admin/platform/settings`
-- `GET|HEAD|POST /api/grafana/d/...` when `embedMode=proxy`
+Query **`tenant`** required for `{id}` read/write, diagnostics, etc.
 
 ### Admin snapshots
 
@@ -103,10 +96,6 @@ Proxies `/v1/pools` (**not tenant-isolated**; BFF uses first tenant key in `tena
 ### `GET /api/admin/platform/summary`
 
 Server health/version plus component placeholders.
-
-## History
-
-See [07-sandbox-history.md](./07-sandbox-history.md) for `/api/history/*`.
 
 ## Health
 

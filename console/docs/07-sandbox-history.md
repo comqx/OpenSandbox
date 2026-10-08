@@ -1,44 +1,15 @@
-# Sandbox lifecycle history
+# Sandbox lifecycle history (deferred)
 
-Uses **shared PostgreSQL** (e.g. database `opensandbox`). Single table **`sandbox_lifecycle_history`**:
+Persistent sandbox **apply history**, **tenant usage**, and **image run statistics** are **not part of the initial upstream console MVP**. They depend on a future server-side persistence design (PostgreSQL audit or catalog, K8s watch vs Docker poll) and possible **major-version** Lifecycle API semantics for deleted sandboxes.
 
-| Writer | When | Fields |
-|--------|------|--------|
-| **Server** (`[store.lifecycle_audit] enabled=true`) | After successful Lifecycle create/delete (async) | tenant, image, status, timestamps, limit summary |
-| **Console BFF** | Console create/list/reconcile/delete | same + `create_request`, `source=console*`, etc. |
+Track design discussion in a follow-up OSEP/PR series. Until then:
 
-SDK/script calls to the server are recorded by server audit. With audit enabled, set **`BFF_HISTORY_RECONCILE_ON_READ=false`** so history pages do not full-scan Lifecycle on every read.
+- Console reads **live Lifecycle API** data only (`GET /sandboxes`, etc.).
+- Do not enable server `[store.lifecycle_audit]` or BFF `BFF_HISTORY_*` in the MVP PR.
 
-## Enable
+When implemented, expect:
 
-**Server** (`configuration.md` / Helm `configToml`):
+- **Server-owned schema** under `[store]` (same pattern as snapshots), not BFF `CREATE TABLE`.
+- **Audit-first model**: PostgreSQL as a queryable copy; runtime remains source of truth for existence; `GET` after delete stays **404** unless a future major version defines tombstones.
 
-```toml
-[store]
-type = "postgresql"
-
-[store.lifecycle_audit]
-enabled = true
-```
-
-**BFF**:
-
-| Variable | Description |
-|----------|-------------|
-| `BFF_HISTORY_ENABLED` | `true` |
-| `BFF_HISTORY_DATABASE_URL` | Same DSN as server store |
-| `BFF_HISTORY_RECONCILE_ON_READ` | default `true`; prefer `false` when server audit is on |
-
-BFF runs `CREATE TABLE IF NOT EXISTS sandbox_lifecycle_history` only (no import from legacy `console_sandbox_history` tables).
-
-## Reads
-
-History, usage, and image stats query **`sandbox_lifecycle_history`** only.
-
-## API
-
-See [03-bff-api.md](./03-bff-api.md) and `/api/history/*`.
-
-## Database permissions
-
-Role needs `SELECT, INSERT, UPDATE` on `sandbox_lifecycle_history`; snapshot counts may need `SELECT` on `snapshots`.
+See [05-feature-matrix.md](./05-feature-matrix.md) for what ships in MVP vs follow-up PRs.

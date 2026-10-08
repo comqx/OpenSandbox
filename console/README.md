@@ -1,6 +1,6 @@
 # OpenSandbox Developer Console
 
-Standalone **React SPA + FastAPI BFF** for sandbox operations. Aligns with [OSEP-0006](../../oseps/0006-developer-console.md) as a **BFF adjunct** (httpOnly session; API keys stay on the server). Optional [server lifecycle audit](../server/configuration.md) can share PostgreSQL history with the BFF.
+Standalone **React SPA + FastAPI BFF** for sandbox operations. Aligns with [OSEP-0006](../../oseps/0006-developer-console.md) as a **BFF adjunct** (httpOnly session; API keys stay on the server). The **upstream MVP** targets Lifecycle proxy + UI only; PostgreSQL history and server-side audit are deferred ([07-sandbox-history.md](./docs/07-sandbox-history.md)).
 
 Long-form docs for the published site: [Developer Console guide](../docs/guides/developer-console.md).
 
@@ -14,7 +14,7 @@ Long-form docs for the published site: [Developer Console guide](../docs/guides/
 | [docs/03-bff-api.md](./docs/03-bff-api.md) | BFF HTTP API for the SPA |
 | [docs/05-feature-matrix.md](./docs/05-feature-matrix.md) | Implemented vs optional features |
 | [docs/06-build-and-deploy.md](./docs/06-build-and-deploy.md) | Images (linux/amd64) and Kubernetes |
-| [docs/07-sandbox-history.md](./docs/07-sandbox-history.md) | PostgreSQL `sandbox_lifecycle_history` |
+| [docs/07-sandbox-history.md](./docs/07-sandbox-history.md) | Deferred history / usage design |
 | [bff/](./bff/) | FastAPI BFF |
 | [web/](./web/) | Vite + React + Ant Design |
 | [k8s/](./k8s/) | Example manifests (adjust for your cluster) |

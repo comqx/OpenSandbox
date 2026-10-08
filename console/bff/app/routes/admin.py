@@ -28,27 +28,12 @@ from app.k8s_platform import probe_platform_deployment
 from app.k8s_probe import probe_node_agent
 from app.k8s_resources import list_events, list_workloads
 from app.nodeagent_archive import fetch_archive_logs
-from app.monitor_context import sandbox_monitor_response
 from app.routes.admin_proxy import admin_get_sandbox, admin_lifecycle_request
 from app.routes.session_keys import api_key_for_tenant_name, tenant_namespace_for_name
 from app.runtime import aggregate_runtime_stats, attach_runtime_summary
-from app.history import tasks as history_tasks
 from app.tenants import load_tenants
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-@router.get("/tenants")
-async def list_configured_tenants(
-    payload: dict = Depends(get_session_payload),
-) -> dict[str, Any]:
-    """Tenant names from BFF tenants.toml (for Admin UI tenant picker)."""
-    require_admin_session(payload)
-    settings = get_settings()
-    tenants = load_tenants(settings.tenants_toml_path)
-    return {
-        "items": [{"name": t.name, "namespace": t.namespace} for t in tenants],
-    }
 
 
 @router.get("/sandboxes")
@@ -94,11 +79,6 @@ async def admin_list_sandboxes(
             enriched["tenant"] = tenant_name
             enriched["namespace"] = namespace
             items.append(enriched)
-            history_tasks.schedule_upsert(
-                {"role": "admin", "tenant": tenant_name, "namespace": namespace},
-                enriched,
-                source="console-admin",
-            )
 
     await asyncio.gather(*[fetch_one(t.name, t.namespace, t.api_key) for t in tenants])
 
@@ -124,22 +104,6 @@ async def admin_get_sandbox_route(
     return await admin_get_sandbox(tenant, sandbox_id)
 
 
-@router.get("/sandboxes/{sandbox_id}/monitor")
-async def admin_sandbox_monitor(
-    sandbox_id: str,
-    request: Request,
-    payload: dict = Depends(get_session_payload),
-) -> dict[str, Any]:
-    require_admin_session(payload)
-    tenant = _require_tenant_query(request)
-    return await sandbox_monitor_response(
-        get_settings(),
-        request,
-        sandbox_id=sandbox_id,
-        tenant_name=tenant,
-    )
-
-
 @router.delete("/sandboxes/{sandbox_id}")
 async def admin_delete_sandbox(
     sandbox_id: str,
@@ -148,16 +112,7 @@ async def admin_delete_sandbox(
 ):
     require_admin_session(payload)
     tenant = _require_tenant_query(request)
-    ns = tenant_namespace_for_name(tenant)
-    final_sandbox = await admin_get_sandbox(tenant, sandbox_id)
-    result = await admin_lifecycle_request(tenant, "DELETE", f"/sandboxes/{sandbox_id}", request=request)
-    history_tasks.schedule_mark_deleted(
-        sandbox_id,
-        tenant=tenant,
-        namespace=ns,
-        final_sandbox=final_sandbox if isinstance(final_sandbox, dict) else None,
-    )
-    return result
+    return await admin_lifecycle_request(tenant, "DELETE", f"/sandboxes/{sandbox_id}", request=request)
 
 
 @router.post("/sandboxes/{sandbox_id}/renew-expiration")
