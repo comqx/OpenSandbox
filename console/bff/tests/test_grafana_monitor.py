@@ -14,7 +14,11 @@
 
 from datetime import datetime, timezone
 
-from app.grafana_monitor import build_grafana_dashboard_path, resolve_time_range
+from app.grafana_monitor import (
+    build_grafana_dashboard_path,
+    datasource_query_param,
+    resolve_time_range,
+)
 from app.k8s_resources import primary_pod_name_for_sandbox
 
 
@@ -47,6 +51,45 @@ def test_build_grafana_dashboard_path_with_pod():
     assert "_dash.hideLinks=true" in path
     assert "hideLogo=1" in path
     assert "expandRows=true" in path
+    assert "var-DS_PROM=prometheus" in path
+
+
+def test_build_grafana_dashboard_path_includes_datasource():
+    cfg = {
+        "dashboardSlug": "opensandbox-pod-node",
+        "dashboardUid": "711161a",
+        "refresh": "30s",
+        "varNamespace": "var-namespace",
+        "varPod": "var-pod",
+        "varNode": "var-node",
+        "varDatasource": "var-DS_PROM",
+        "datasourceUid": "cfzrpakzi1rlsd",
+    }
+    t0 = datetime(2026, 9, 30, 5, 46, 28, tzinfo=timezone.utc)
+    t1 = datetime(2026, 9, 30, 7, 15, 55, tzinfo=timezone.utc)
+    path = build_grafana_dashboard_path(
+        cfg,
+        namespace="opensandbox-system",
+        pod_names=[],
+        time_from=t0,
+        time_to=t1,
+    )
+    assert "var-DS_PROM=cfzrpakzi1rlsd" in path
+    assert "var-namespace=opensandbox-system" in path
+
+
+def test_datasource_uid_pasted_into_variable_name_still_sets_var_ds_prom():
+    name, uid = datasource_query_param(
+        {"varDatasource": "cfzrpakzi1rlsd", "datasourceUid": "prometheus"},
+    )
+    assert (name, uid) == ("var-DS_PROM", "cfzrpakzi1rlsd")
+
+
+def test_bare_datasource_variable_name_gets_var_prefix():
+    name, uid = datasource_query_param(
+        {"varDatasource": "DS_PROM", "datasourceUid": "cfzrpakzi1rlsd"},
+    )
+    assert (name, uid) == ("var-DS_PROM", "cfzrpakzi1rlsd")
 
 
 def test_primary_pod_name_for_sandbox():

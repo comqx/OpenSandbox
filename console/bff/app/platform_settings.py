@@ -37,6 +37,8 @@ GRAFANA_SETTING_KEYS = (
     "varNamespace",
     "varPod",
     "varNode",
+    "varDatasource",
+    "datasourceUid",
     "authProxyEnabled",
     "authProxyUserHeader",
     "embedExpandRows",
@@ -88,6 +90,8 @@ def _defaults(settings: Settings) -> dict[str, Any]:
         "varNamespace": settings.bff_grafana_var_namespace,
         "varPod": settings.bff_grafana_var_pod,
         "varNode": settings.bff_grafana_var_node,
+        "varDatasource": settings.bff_grafana_var_datasource,
+        "datasourceUid": settings.bff_grafana_datasource_uid,
         "authProxyEnabled": settings.bff_grafana_auth_proxy_enabled,
         "authProxyUserHeader": settings.bff_grafana_auth_proxy_user_header,
         "embedExpandRows": True,
@@ -113,12 +117,25 @@ def _validate_patch(body: dict[str, Any]) -> dict[str, Any]:
         if not url:
             raise ValueError("baseUrl must be non-empty when set")
         patch["baseUrl"] = url
-    for key in ("dashboardSlug", "dashboardUid", "refresh", "varNamespace", "varPod", "varNode"):
+    for key in (
+        "dashboardSlug",
+        "dashboardUid",
+        "refresh",
+        "varNamespace",
+        "varPod",
+        "varNode",
+        "varDatasource",
+    ):
         if key in body:
             val = str(body[key]).strip()
+            if key == "varDatasource":
+                patch[key] = val or "var-DS_PROM"
+                continue
             if not val:
                 raise ValueError(f"{key} must be non-empty when set")
             patch[key] = val
+    if "datasourceUid" in body:
+        patch["datasourceUid"] = str(body["datasourceUid"]).strip()
     if "embedMode" in body:
         mode = str(body["embedMode"]).strip().lower()
         if mode not in ("direct", "proxy"):

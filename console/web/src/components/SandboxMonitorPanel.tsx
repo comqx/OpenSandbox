@@ -105,6 +105,9 @@ export function SandboxMonitorPanel({ sandboxId, tenant }: Props) {
         时间范围：
         {formatDateTime(data.timeRange?.from)} — {formatDateTime(data.timeRange?.to)}
         {data.namespace ? ` · namespace=${data.namespace}` : ''}
+        {data.datasourceVar && data.datasourceUid
+          ? ` · ${data.datasourceVar}=${data.datasourceUid}`
+          : ''}
         {data.pods?.length ? ` · Pod: ${data.pods.map((p) => p.name).join(', ')}` : ''}
       </Typography.Paragraph>
       {data.iframeUrl ? (

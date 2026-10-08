@@ -16,18 +16,15 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request, status
 
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.session import decode_session
 
 
-def get_session_payload(
-    request: Request,
-    settings: Settings | None = None,
-    cookie: str | None = None,
-) -> dict:
-    settings = settings or get_settings()
-    if cookie is None:
-        cookie = request.cookies.get(settings.bff_session_cookie_name)
+def get_session_payload(request: Request) -> dict:
+    # Keep this signature to Request only. A Settings parameter is a Pydantic model, and
+    # FastAPI would treat it as a second body field, forcing clients to send {"body": {...}}.
+    settings = get_settings()
+    cookie = request.cookies.get(settings.bff_session_cookie_name)
     if not cookie:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

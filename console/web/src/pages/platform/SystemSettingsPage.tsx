@@ -123,6 +123,20 @@ export function SystemSettingsPage() {
           <Form.Item name="varNode" label="node 变量">
             <Input />
           </Form.Item>
+          <Form.Item
+            name="datasourceUid"
+            label="数据源 UID"
+            extra="写入嵌入地址的 var-DS_PROM。留空时使用 prometheus。例如 cfzrpakzi1rlsd。"
+          >
+            <Input placeholder="prometheus" />
+          </Form.Item>
+          <Form.Item
+            name="varDatasource"
+            label="数据源变量名"
+            extra="一般保持 var-DS_PROM。这里填的是 URL 参数名，不是数据源 UID。"
+          >
+            <Input placeholder="var-DS_PROM" />
+          </Form.Item>
           <Form.Item name="authProxyEnabled" label="反代时发送 Auth Proxy 头" valuePropName="checked">
             <Switch />
           </Form.Item>

@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     bff_grafana_var_namespace: str = "var-namespace"
     bff_grafana_var_pod: str = "var-pod"
     bff_grafana_var_node: str = "var-node"
+    bff_grafana_var_datasource: str = "var-DS_PROM"
+    bff_grafana_datasource_uid: str = "prometheus"
     bff_grafana_auth_proxy_enabled: bool = False
     bff_grafana_auth_proxy_user_header: str = "X-WEBAUTH-USER"
     # Optional JSON file when history DB is disabled (Admin PATCH persistence)
