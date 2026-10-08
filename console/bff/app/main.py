@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.lifecycle import LifecycleClient
-from app.routes import auth, sandboxes
+from app.routes import auth, sandboxes, snapshots
 
 app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
 
@@ -56,4 +56,5 @@ app.add_middleware(
 api = FastAPI()
 api.include_router(auth.router)
 api.include_router(sandboxes.router)
+api.include_router(snapshots.router)
 app.mount("/api", api)
