@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     bff_cors_origins: str = "*"
     bff_aggregate_cache_seconds: int = 0
     bff_http_timeout_seconds: float = 30.0
+    # Empty follows LIFECYCLE_API_BASE. Set http or https when execd endpoints omit a scheme.
+    bff_execd_protocol: str = ""
     bff_session_cookie_name: str = "opensandbox_console_session"
     bff_session_max_age_seconds: int = 86400
 
