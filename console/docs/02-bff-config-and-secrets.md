@@ -40,7 +40,7 @@ In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.exa
 |----------|---------|-------------|
 | `BFF_HISTORY_ENABLED` | `false` | Enable `sandbox_lifecycle_history` and `/api/history/*` |
 | `BFF_HISTORY_DATABASE_URL` | empty | Same DB as server `[store.postgresql]`; see [07-sandbox-history.md](./07-sandbox-history.md) |
-| `BFF_HISTORY_RECONCILE_ON_READ` | `true` | Lifecycle reconcile on history reads; set `false` when server `[store.lifecycle_audit]` is enabled |
+| `BFF_HISTORY_RECONCILE_ON_READ` | `true` | On history reads, refresh state from Lifecycle and close rows that are no longer listed. `false` skips that scan |
 
 ### Optional: Grafana sandbox monitor
 
