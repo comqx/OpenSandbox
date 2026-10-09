@@ -13,6 +13,7 @@
 | `BFF_AGGREGATE_CACHE_SECONDS` | no | Admin list cache; default `0` |
 | `BFF_HTTP_TIMEOUT_SECONDS` | no | Upstream timeout; default `30` |
 | `BFF_EXECD_PROTOCOL` | no | Scheme for execd endpoints that omit one. Empty follows `LIFECYCLE_API_BASE` (`http` or `https`) |
+| `BFF_SHELL_ENDPOINT_MODE` | no | `server` (default) dials `{LIFECYCLE_API_BASE}/sandboxes/{id}/proxy/44772`. `gateway` dials the public ingress endpoint from `GET /endpoints/44772` |
 
 ### Optional: node-agent integration
 
