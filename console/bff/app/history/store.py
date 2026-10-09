@@ -268,7 +268,7 @@ def upsert_from_sandbox(
                     THEN sandbox_lifecycle_history.lifecycle_created_at
                     ELSE COALESCE(
                         EXCLUDED.lifecycle_created_at,
-                        sandbox_lifecycle_history.lifecycle_created_at,
+                        sandbox_lifecycle_history.lifecycle_created_at
                     )
                 END,
                 expires_at = COALESCE(
