@@ -134,7 +134,6 @@ async def admin_sandbox_monitor(
     tenant = _require_tenant_query(request)
     return await sandbox_monitor_response(
         get_settings(),
-        request,
         sandbox_id=sandbox_id,
         tenant_name=tenant,
     )

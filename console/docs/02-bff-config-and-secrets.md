@@ -40,14 +40,15 @@ In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.exa
 |----------|---------|-------------|
 | `BFF_HISTORY_ENABLED` | `false` | Enable `sandbox_lifecycle_history` and `/api/history/*` |
 | `BFF_HISTORY_DATABASE_URL` | empty | Same DB as server `[store.postgresql]`; see [07-sandbox-history.md](./07-sandbox-history.md) |
-| `BFF_HISTORY_RECONCILE_ON_READ` | `true` | On history reads, refresh state from Lifecycle and close rows that are no longer listed. `false` skips that scan |
+| `BFF_HISTORY_RECONCILE_ON_READ` | `false` | When `true`, history API reads scan Lifecycle before responding. Leave `false`; the poller does the scan |
+| `BFF_HISTORY_RECONCILE_INTERVAL_SECONDS` | `600` | How often the BFF reconciles every tenant. `0` disables the poller. A past `expires_at` is the close time |
 
 ### Optional: Grafana sandbox monitor
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BFF_GRAFANA_ENABLED` | `false` | Sandbox detail **Monitor** tab |
-| `BFF_GRAFANA_BASE_URL` | empty | e.g. `https://grafana.example.com` |
+| `BFF_GRAFANA_BASE_URL` | empty | Upstream Grafana. `direct` must be a browser-reachable `https://` URL. `proxy` may be an in-cluster `http://` Service; the iframe is `/api/grafana/...` on the console origin |
 | `BFF_GRAFANA_DASHBOARD_SLUG` | `opensandbox-pod-node` | Dashboard URL segment |
 | `BFF_GRAFANA_DASHBOARD_UID` | empty | Dashboard UID |
 | `BFF_GRAFANA_REFRESH` | `30s` | Embed refresh query param |

@@ -147,16 +147,17 @@ def build_grafana_dashboard_path(
 def build_embed_urls(
     cfg: dict[str, Any],
     dashboard_path: str,
-    *,
-    request_base: str,
 ) -> tuple[str, str | None]:
-    """Returns (iframeUrl, externalUrl). externalUrl is always the direct Grafana link."""
+    """Returns (iframeUrl, externalUrl). externalUrl is always the direct Grafana link.
+
+    Proxy iframes are a same-origin path. ``request.base_url`` behind the console
+    nginx is plain HTTP, and ``baseUrl`` may be an in-cluster ``http://`` Service.
+    Either absolute URL is blocked as mixed content on the HTTPS console page.
+    """
     base = cfg["baseUrl"].rstrip("/")
     external = f"{base}{dashboard_path}"
     if cfg.get("embedMode") == "proxy":
-        proxy_base = request_base.rstrip("/")
-        iframe = f"{proxy_base}/api/grafana{dashboard_path}"
-        return iframe, external
+        return f"/api/grafana{dashboard_path}", external
     return external, external
 
 
@@ -168,7 +169,6 @@ async def build_sandbox_monitor(
     k8s_namespace: str,
     sandbox: dict[str, Any] | None,
     history: dict[str, Any] | None,
-    request_base_url: str,
 ) -> dict[str, Any]:
     cfg = get_platform_settings(settings)
     warnings: list[str] = []
@@ -215,7 +215,7 @@ async def build_sandbox_monitor(
         time_from=time_from,
         time_to=time_to,
     )
-    iframe_url, external_url = build_embed_urls(cfg, dashboard_path, request_base=request_base_url)
+    iframe_url, external_url = build_embed_urls(cfg, dashboard_path)
 
     datasource_var, datasource_uid = datasource_query_param(cfg)
     return {

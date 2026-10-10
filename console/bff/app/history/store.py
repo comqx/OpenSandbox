@@ -448,7 +448,12 @@ def mark_missing_as_terminated(
     tenant_name: str,
     live_sandbox_ids: set[str],
 ) -> int:
-    """Close history rows that Lifecycle no longer lists (expired, SDK delete, etc.)."""
+    """Close history rows that Lifecycle no longer lists.
+
+    A past ``expires_at`` is the end of the sandbox. Refresh time is only a
+    fallback when the row has no expiration, or it expired in the future and
+    disappeared early. One statement must not stamp every row with ``now``.
+    """
     if _pool is None:
         return 0
     now = datetime.now(timezone.utc)
@@ -467,19 +472,37 @@ def mark_missing_as_terminated(
             return 0
         conn.execute(
             """
-            UPDATE sandbox_lifecycle_history
+            UPDATE sandbox_lifecycle_history AS h
             SET
                 state = 'Terminated',
-                ended_at = COALESCE(ended_at, %s),
-                deleted_at = COALESCE(deleted_at, %s),
+                ended_at = COALESCE(h.ended_at, v.close_at),
+                deleted_at = COALESCE(h.deleted_at, v.close_at),
                 last_seen_at = %s,
-            """
-            + _WALL_CLOCK_FREEZE_SQL
-            + """
-            WHERE tenant_name = %s
-              AND sandbox_id = ANY(%s)
+                wall_clock_seconds = GREATEST(
+                    0,
+                    FLOOR(
+                        EXTRACT(
+                            EPOCH FROM (
+                                COALESCE(h.ended_at, v.close_at)
+                                - COALESCE(h.lifecycle_created_at, h.first_recorded_at)
+                            )
+                        )
+                    )
+                )::int
+            FROM (
+                SELECT
+                    sandbox_id,
+                    CASE
+                        WHEN expires_at IS NOT NULL AND expires_at <= %s THEN expires_at
+                        ELSE %s
+                    END AS close_at
+                FROM sandbox_lifecycle_history
+                WHERE tenant_name = %s
+                  AND sandbox_id = ANY(%s)
+            ) AS v
+            WHERE h.sandbox_id = v.sandbox_id
             """,
-            (now, now, now, now, tenant_name, stale),
+            (now, now, now, tenant_name, stale),
         )
         return len(stale)
 

@@ -59,8 +59,10 @@ class Settings(BaseSettings):
     # Optional: sandbox apply history in PostgreSQL (same DB as Server [store]; table sandbox_lifecycle_history)
     bff_history_enabled: bool = False
     bff_history_database_url: str = ""
-    # Lifecycle list reconcile on history API reads (optional; Server [store.lifecycle_audit] is primary)
-    bff_history_reconcile_on_read: bool = True
+    # When true, history API reads scan Lifecycle before returning. Default off; the poller does that scan.
+    bff_history_reconcile_on_read: bool = False
+    # Seconds between history reconcile polls. 0 disables the poller.
+    bff_history_reconcile_interval_seconds: int = 600
 
     # Grafana embed (Console sandbox monitor + Admin system settings)
     bff_grafana_enabled: bool = False
