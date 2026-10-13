@@ -13,35 +13,25 @@
 // limitations under the License.
 
 import { PlusOutlined } from '@ant-design/icons';
-import {
-  Alert,
-  Button,
-  Form,
-  Input,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Typography,
-  message,
-} from 'antd';
+import { Alert, Button, Input, Modal, Popconfirm, Space, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { imageCatalogApi } from '../api/client';
-import type { SandboxImageCatalogInput, SandboxImageCatalogItem } from '../api/types';
+import type { SandboxImageCatalogItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { YamlCodeEditor } from '../components/YamlCodeEditor';
 import { formatDateTime } from '../utils/format';
+import { imageCatalogYamlTemplate, parseImageCatalogYaml } from '../utils/imageCatalogYaml';
 
-function PackageList({ items }: { items: string[] }) {
-  if (items.length === 0) return <>—</>;
+function PackageList({ items, color }: { items?: string[]; color: string }) {
+  const list = items ?? [];
+  if (list.length === 0) return <>—</>;
   return (
     <Space size={[4, 4]} wrap>
-      {items.map((item) => (
-        <Tag key={item} style={{ margin: 0 }}>
+      {list.map((item) => (
+        <Tag key={item} color={color} style={{ margin: 0 }}>
           {item}
         </Tag>
       ))}
@@ -49,31 +39,9 @@ function PackageList({ items }: { items: string[] }) {
   );
 }
 
-function TagSelect({ placeholder }: { placeholder: string }) {
-  return (
-    <Select
-      mode="tags"
-      tokenSeparators={[',', '，']}
-      placeholder={placeholder}
-      open={false}
-      suffixIcon={null}
-    />
-  );
-}
-
-const EMPTY_FORM: SandboxImageCatalogInput = {
-  displayName: '',
-  imageUri: '',
-  scenarios: [],
-  systemPackages: [],
-  runtimePackages: [],
-  maintainer: '',
-};
-
 export function SandboxImageListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [form] = Form.useForm<SandboxImageCatalogInput>();
   const [items, setItems] = useState<SandboxImageCatalogItem[]>([]);
   const [persisted, setPersisted] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -81,6 +49,8 @@ export function SandboxImageListPage() {
   const [keyword, setKeyword] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<SandboxImageCatalogItem | null>(null);
+  const [yamlText, setYamlText] = useState('');
+  const [yamlError, setYamlError] = useState<string | null>(null);
 
   const defaultMaintainer = user?.role === 'admin' ? '平台' : (user?.tenant ?? '');
 
@@ -100,22 +70,6 @@ export function SandboxImageListPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (editing) {
-      form.setFieldsValue({
-        displayName: editing.displayName,
-        imageUri: editing.imageUri,
-        scenarios: editing.scenarios,
-        systemPackages: editing.systemPackages,
-        runtimePackages: editing.runtimePackages,
-        maintainer: editing.maintainer,
-      });
-      return;
-    }
-    form.setFieldsValue({ ...EMPTY_FORM, maintainer: defaultMaintainer });
-  }, [defaultMaintainer, editing, form, open]);
 
   const filtered = useMemo(() => {
     const query = keyword.trim().toLowerCase();
@@ -137,19 +91,25 @@ export function SandboxImageListPage() {
 
   const openCreate = () => {
     setEditing(null);
+    setYamlError(null);
+    setYamlText(imageCatalogYamlTemplate({ maintainer: defaultMaintainer }));
     setOpen(true);
   };
 
   const openEdit = (row: SandboxImageCatalogItem) => {
     setEditing(row);
+    setYamlError(null);
+    setYamlText(imageCatalogYamlTemplate(row));
     setOpen(true);
   };
 
   const onSubmit = async () => {
-    let values: SandboxImageCatalogInput;
+    let values;
     try {
-      values = await form.validateFields();
-    } catch {
+      values = parseImageCatalogYaml(yamlText);
+      setYamlError(null);
+    } catch (error) {
+      setYamlError(error instanceof Error ? error.message : 'YAML 无法解析');
       return;
     }
     setSaving(true);
@@ -184,15 +144,14 @@ export function SandboxImageListPage() {
       {
         title: '名称',
         dataIndex: 'displayName',
-        width: 180,
-        fixed: 'left',
+        width: 160,
       },
       {
         title: '镜像地址',
         dataIndex: 'imageUri',
-        ellipsis: true,
+        onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
         render: (uri: string) => (
-          <Typography.Text copyable={{ text: uri }} style={{ fontSize: 13 }}>
+          <Typography.Text copyable={{ text: uri }} style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
             {uri}
           </Typography.Text>
         ),
@@ -200,28 +159,20 @@ export function SandboxImageListPage() {
       {
         title: '使用场景',
         dataIndex: 'scenarios',
-        width: 220,
-        render: (scenarios: string[]) => (
-          <Space size={[4, 4]} wrap>
-            {scenarios.map((item) => (
-              <Tag key={item} color="blue" style={{ margin: 0 }}>
-                {item}
-              </Tag>
-            ))}
-          </Space>
-        ),
+        width: 240,
+        render: (scenarios?: string[]) => <PackageList items={scenarios} color="blue" />,
       },
       {
         title: '系统包',
         dataIndex: 'systemPackages',
-        width: 220,
-        render: (packages: string[]) => <PackageList items={packages} />,
+        width: 240,
+        render: (packages?: string[]) => <PackageList items={packages} color="orange" />,
       },
       {
         title: '内置软件 / 语言生态',
         dataIndex: 'runtimePackages',
-        width: 240,
-        render: (packages: string[]) => <PackageList items={packages} />,
+        width: 260,
+        render: (packages?: string[]) => <PackageList items={packages} color="green" />,
       },
       {
         title: '来源',
@@ -238,7 +189,6 @@ export function SandboxImageListPage() {
         title: '操作',
         key: 'actions',
         width: 200,
-        fixed: 'right',
         render: (_value, row) => (
           <Space size="small">
             <Button
@@ -301,7 +251,7 @@ export function SandboxImageListPage() {
         columns={columns}
         dataSource={filtered}
         pagination={{ pageSize: 20, hideOnSinglePage: true }}
-        scroll={{ x: 1480 }}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: persisted ? '还没有镜像。点击右上角录入，供研发选用。' : '目录为空' }}
       />
 
@@ -313,36 +263,15 @@ export function SandboxImageListPage() {
         onCancel={() => setOpen(false)}
         okText="保存"
         destroyOnClose
-        width={640}
+        width={760}
       >
-        <Form form={form} layout="vertical" preserve={false}>
-          <Form.Item
-            name="displayName"
-            label="名称"
-            rules={[{ required: true, whitespace: true, message: '请填写名称' }]}
-          >
-            <Input placeholder="Python 3.12 沙箱" maxLength={80} />
-          </Form.Item>
-          <Form.Item
-            name="imageUri"
-            label="镜像地址"
-            rules={[{ required: true, whitespace: true, message: '请填写镜像地址' }]}
-          >
-            <Input placeholder="hub.example.com/opensandbox/python:3.12" maxLength={512} />
-          </Form.Item>
-          <Form.Item name="scenarios" label="使用场景" extra="输入后回车，或用逗号分隔。">
-            <TagSelect placeholder="数据分析、Agent 工具调用" />
-          </Form.Item>
-          <Form.Item name="systemPackages" label="系统包">
-            <TagSelect placeholder="git、curl、build-essential" />
-          </Form.Item>
-          <Form.Item name="runtimePackages" label="内置软件 / 语言生态">
-            <TagSelect placeholder="Python 3.12、pip、uv" />
-          </Form.Item>
-          <Form.Item name="maintainer" label="来源" extra="默认是当前登录身份，可改成团队或平台名称。">
-            <Input placeholder={defaultMaintainer || '平台'} maxLength={64} />
-          </Form.Item>
-        </Form>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          字段已经写好。只改冒号后面的值，灰色斜体的备注可以保留。
+        </Typography.Paragraph>
+        {yamlError && (
+          <Alert type="error" showIcon style={{ marginBottom: 12 }} message={yamlError} />
+        )}
+        <YamlCodeEditor value={yamlText} onChange={setYamlText} />
       </Modal>
     </div>
   );
