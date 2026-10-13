@@ -34,15 +34,16 @@ EOF
 }
 
 # Commas separate commits; order matters (oldest first).
+# SHAs from feat/console-extended-scope after restack (2026-10-13). Re-run `list` after history rewrite.
 declare -A PR_COMMITS=(
-  [e1]="6978e0f4,6a2440fe,6b33c25c,15711f34"
-  [e2]="fce58f3f"
-  [e3]="739496c3,164062c9,5e8eb375,87884f79"
-  [e4]="752a35c6,869477c9,a559b56d"
-  [e5]="752a35c6"
-  [e6]="1aa6ce07"
-  [e7]="095a7e84,5cb1527e"
-  [e8]="19e2ed58"
+  [e1]="c0d40cbc,aecec41e,f53fcf8a,3f08fb7f,077d0f20,6ba7e9ba"
+  [e2]="b40a7cfc,9350e07f"
+  [e3]="477dbb94,cd56bed2,2c08ea33,c9dfacaf"
+  [e4]="12a562ed,fbf9b66d,771e1e83"
+  [e5]="0837dcc6"
+  [e6]="0a7d8a0b"
+  [e7]="7c31dba1,d59776ec"
+  [e8]="e82ec68a"
 )
 
 declare -A PR_BRANCH=(
@@ -62,8 +63,8 @@ list_groups() {
   for id in e1 e2 e3 e4 e5 e6 e7 e8; do
     echo "  $id  branch: ${PR_BRANCH[$id]}"
     echo "      commits: ${PR_COMMITS[$id]}"
-    if [[ "$id" == "e2" || "$id" == "e5" || "$id" == "e6" ]]; then
-      echo "      NOTE: mixed source commit — cherry-pick may require path-limited staging."
+    if [[ "$id" == "e1" || "$id" == "e3" ]]; then
+      echo "      NOTE: cherry-pick onto upstream MVP (E0), not raw main, unless E0 is merged."
     fi
     echo
   done

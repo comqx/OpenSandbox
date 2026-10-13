@@ -28,53 +28,35 @@ Stack branches so each PR is reviewable; later PRs rebase on the previous merge.
 
 E2 and E5 are **server-only** and can merge independently of console if maintainers prefer.
 
-## Mapping: current commits → intended PRs
+## Commit history (after restack)
 
-Commits on `feat/console-extended-scope` (oldest first). **Clean** = single PR; **Mixed** = split or cherry-pick paths before upstream.
+Mixed commits were split on **2026-10-13** so each commit is **console-only** or **server-only** (see `console/scripts/restack-extended-scope-commits.sh`). Use `git log main..feat/console-extended-scope --oneline` for current SHAs; `split-extended-pr-stack.sh list` tracks cherry-pick groups for E1–E8.
 
-| Commit | Subject | PR bucket | Notes |
-| --- | --- | --- | --- |
-| `11705fbe` … `61419f7c` | MVP console base + fixes | **E0** (upstream stack) | Already split as PR1–PR5 on fork |
-| `6978e0f4` | history persistence + usage UI | **E1** | Clean (console) |
-| `e9b1a470` | semantic tags + log polish | **E0/E1** | UI-only; can ride MVP polish or E1 |
-| `6a2440fe`, `6b33c25c` | history API fixes | **E1** | Clean |
-| `347b4b52` | gitignore pnpm locks | **E0** | Chore |
-| `fce58f3f` | PG audit + shared history | **E1 + E2** | **Mixed** — split `server/` vs `console/` |
-| `739496c3` | mirror accel, Grafana, platform | **E3** | Large; OK as one PR, multiple commits ideal |
-| `9e6496fb` | English console docs | **E0** docs PR or E3 | Docs-only |
-| `164062c9` | Grafana/platform polish | **E3** | Clean |
-| `752a35c6` | shell + K8s batch fix | **E4 + E5** | **Mixed** — split server test/provider vs console |
-| `869477c9`, `a559b56d` | shell nginx + proxy dial | **E4** | Clean |
-| `15711f34` | history reconcile fix | **E1** | Clean |
-| `5e8eb375` | Grafana proxy + history poll | **E3 + E1** | Cross-cutting; acceptable as E3 if E1 merged |
-| `1aa6ce07` | labels, create UX, audit metadata | **E6 + E2** | **Mixed** — split server metadata vs console |
-| `095a7e84`, `5cb1527e` | image catalog + YAML editor | **E7** | Clean (console) |
-| `19e2ed58` | image build OSS/PG spec | **E8** | Docs-only (implementation follows) |
-| `87884f79` | dependency accelerator nav label | **E3** | UI copy only |
-| `1a042506` | this split guide + script | — | Meta; not a product PR |
+| PR | Commits (subjects, in order) |
+| --- | --- |
+| **E0** | MVP console through `ba21ac13` (+ polish commits you fold into upstream PR1–5) |
+| **E1** | `c0d40cbc` history UI … `6ba7e9ba` history poll reconcile |
+| **E2** | `b40a7cfc` server audit writer, `9350e07f` audit metadata |
+| **E3** | `477dbb94` mirror/Grafana/platform … `c9dfacaf` dependency accelerator label |
+| **E4** | `12a562ed` shell … `771e1e83` lifecycle proxy dial |
+| **E5** | `0837dcc6` BatchSandbox task failures |
+| **E6** | `0a7d8a0b` labels + create UX |
+| **E7** | `7c31dba1`, `d59776ec` image catalog + YAML editor |
+| **E8** | `e82ec68a` build-context storage spec |
 
-### Fixing mixed commits (before opening PRs)
+Docs/meta (optional separate PRs): `3db68ecb` English docs, `ee913ec9` / `e5877098` this stack guide.
 
-Option A — **soft reset + recommit** (branch not shared):
+### Re-running a restack
+
+Only if you reintroduce mixed commits. Takes a backup branch, resets to `main`, replays and splits legacy SHAs:
 
 ```bash
-git rebase -i <merge-base-with-main>
-# mark mixed commit as "edit", then:
-git reset HEAD~1
-git add server/ && git commit -m "feat(server): ..."
-git add console/ && git commit -m "feat(console): ..."
-git rebase --continue
+./console/scripts/restack-extended-scope-commits.sh backup/console-extended-scope-before-restack-XXXXXXXX
 ```
 
-Option B — **cherry-pick onto fresh branch** (safer if branch is pushed):
+Then refresh SHAs in `split-extended-pr-stack.sh`.
 
-```bash
-git checkout -b feat/server-lifecycle-audit main
-git cherry-pick fce58f3f
-# resolve: only stage server/ hunk, commit; then cherry-pick console hunks separately
-```
-
-Use `console/scripts/split-extended-pr-stack.sh list` to print cherry-pick groups.
+Use `./console/scripts/split-extended-pr-stack.sh branch e7 <base>` where `<base>` is **upstream MVP** (after E0 merges), not always `main`.
 
 ## Commit checklist (before push)
 
