@@ -13,11 +13,11 @@
 // limitations under the License.
 
 import {
-  CloudDownloadOutlined,
-  CloudUploadOutlined,
+  CloudSyncOutlined,
   DeleteOutlined,
   DownloadOutlined,
   FileAddOutlined,
+  PlusOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import {
@@ -28,8 +28,8 @@ import {
   Input,
   Modal,
   Row,
-  Select,
   Space,
+  Table,
   Tag,
   Tree,
   Typography,
@@ -37,13 +37,13 @@ import {
   message,
   type UploadProps,
 } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { buildContextApi } from '../api/client';
+import type { BuildContextItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AdminTenantSelect } from '../components/AdminTenantSelect';
 import { BuildContextFileEditor } from '../components/BuildContextFileEditor';
-import type { BuildContextItem } from '../api/types';
 import {
   DEFAULT_DOCKERFILE_PATH,
   type ContextFile,
@@ -56,6 +56,8 @@ import {
 import { packBuildContextTarGz } from '../utils/buildContextTar';
 import { buildContextTreeData } from '../utils/buildContextTree';
 
+const CLOUD_SYNC_DEBOUNCE_MS = 900;
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -63,6 +65,10 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function fileCount(item: BuildContextItem): number {
+  return Object.keys(item.manifest?.files ?? {}).length;
 }
 
 export function SandboxImageBuildPage() {
@@ -79,15 +85,22 @@ export function SandboxImageBuildPage() {
   const [cloudDrafts, setCloudDrafts] = useState<BuildContextItem[]>([]);
   const [adminTenant, setAdminTenant] = useState('');
   const [cloudLoading, setCloudLoading] = useState(false);
-  const [cloudSaving, setCloudSaving] = useState(false);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [lastCloudSyncAt, setLastCloudSyncAt] = useState<string | null>(null);
+
+  const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const draftIdRef = useRef(draftId);
+  draftIdRef.current = draftId;
 
   const tenantScope = user?.role === 'admin' ? adminTenant : user?.tenant;
   const adminNeedsTenant = user?.role === 'admin' && !adminTenant;
+  const cloudActive = cloudPersisted && !adminNeedsTenant;
+
   const pathList = useMemo(() => files.map((file) => file.relativePath), [files]);
   const treeData = useMemo(() => buildContextTreeData(pathList), [pathList]);
-
   const selectedFile = files.find((file) => file.relativePath === selectedPath);
-
   const validation = useMemo(() => validateBuildContext(files, dockerfilePath), [files, dockerfilePath]);
 
   const refreshCloudDrafts = useCallback(async () => {
@@ -113,22 +126,148 @@ export function SandboxImageBuildPage() {
     void refreshCloudDrafts();
   }, [refreshCloudDrafts]);
 
-  const updateFileContent = useCallback((path: string, payload: string) => {
-    setFiles((prev) =>
-      prev.map((file) =>
-        file.relativePath === path && file.encoding === 'utf-8' ? { ...file, payload } : file,
-      ),
-    );
-  }, []);
+  useEffect(
+    () => () => {
+      for (const timer of debounceTimers.current.values()) {
+        clearTimeout(timer);
+      }
+    },
+    [],
+  );
+
+  const ensureDraftContext = useCallback(async (): Promise<string | null> => {
+    if (!cloudActive) {
+      return null;
+    }
+    if (draftIdRef.current) {
+      return draftIdRef.current;
+    }
+    const name = displayName.trim() || `草稿 ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
+    const created = await buildContextApi.create({ displayName: name, dockerfilePath }, tenantScope);
+    setDraftId(created.id);
+    setDisplayName(created.displayName);
+    draftIdRef.current = created.id;
+    return created.id;
+  }, [cloudActive, displayName, dockerfilePath, tenantScope]);
+
+  const uploadFileToOss = useCallback(
+    async (file: ContextFile, contextId: string) => {
+      await buildContextApi.putFile(
+        contextId,
+        file.relativePath,
+        { encoding: file.encoding, content: file.payload },
+        tenantScope,
+      );
+    },
+    [tenantScope],
+  );
+
+  const syncAllFilesToOss = useCallback(async (): Promise<string | null> => {
+    if (!cloudActive) {
+      return null;
+    }
+    if (!validation.ok) {
+      throw new Error(validation.errors[0] ?? '构建上下文校验失败');
+    }
+    setCloudSyncing(true);
+    try {
+      const contextId = await ensureDraftContext();
+      if (!contextId) {
+        return null;
+      }
+      await buildContextApi.patch(
+        contextId,
+        { displayName: displayName.trim() || undefined, dockerfilePath },
+        tenantScope,
+      );
+      for (const file of filesRef.current) {
+        await uploadFileToOss(file, contextId);
+      }
+      setLastCloudSyncAt(new Date().toLocaleTimeString());
+      await refreshCloudDrafts();
+      return contextId;
+    } finally {
+      setCloudSyncing(false);
+    }
+  }, [
+    cloudActive,
+    displayName,
+    dockerfilePath,
+    ensureDraftContext,
+    refreshCloudDrafts,
+    tenantScope,
+    uploadFileToOss,
+    validation,
+  ]);
+
+  const scheduleCloudFileSync = useCallback(
+    (file: ContextFile) => {
+      if (!cloudActive) {
+        return;
+      }
+      const key = file.relativePath;
+      const existing = debounceTimers.current.get(key);
+      if (existing) {
+        clearTimeout(existing);
+      }
+      debounceTimers.current.set(
+        key,
+        setTimeout(() => {
+          void (async () => {
+            try {
+              setCloudSyncing(true);
+              const contextId = await ensureDraftContext();
+              if (!contextId) {
+                return;
+              }
+              await uploadFileToOss(file, contextId);
+              setLastCloudSyncAt(new Date().toLocaleTimeString());
+            } catch (err) {
+              message.error(err instanceof Error ? err.message : '同步 OSS 失败');
+            } finally {
+              setCloudSyncing(false);
+            }
+          })();
+        }, CLOUD_SYNC_DEBOUNCE_MS),
+      );
+    },
+    [cloudActive, ensureDraftContext, uploadFileToOss],
+  );
+
+  const updateFileContent = useCallback(
+    (path: string, payload: string) => {
+      setFiles((prev) => {
+        const next = prev.map((file) =>
+          file.relativePath === path && file.encoding === 'utf-8' ? { ...file, payload } : file,
+        );
+        const updated = next.find((file) => file.relativePath === path);
+        if (updated) {
+          scheduleCloudFileSync(updated);
+        }
+        return next;
+      });
+    },
+    [scheduleCloudFileSync],
+  );
 
   const removeFile = useCallback(
     (path: string) => {
-      setFiles((prev) => prev.filter((file) => file.relativePath !== path));
-      if (selectedPath === path) {
-        setSelectedPath(DEFAULT_DOCKERFILE_PATH);
-      }
+      void (async () => {
+        if (cloudActive && draftId && path !== dockerfilePath) {
+          try {
+            await buildContextApi.deleteFile(draftId, path, tenantScope);
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : '删除 OSS 文件失败');
+            return;
+          }
+        }
+        setFiles((prev) => prev.filter((file) => file.relativePath !== path));
+        if (selectedPath === path) {
+          setSelectedPath(DEFAULT_DOCKERFILE_PATH);
+        }
+      })();
     },
-    [selectedPath],
+    [cloudActive, draftId, dockerfilePath, selectedPath, tenantScope],
   );
 
   const addEmptyFile = () => {
@@ -141,10 +280,12 @@ export function SandboxImageBuildPage() {
       message.error('路径已存在。');
       return;
     }
-    setFiles((prev) => [...prev, { relativePath: normalized, encoding: 'utf-8', payload: '' }]);
+    const entry: ContextFile = { relativePath: normalized, encoding: 'utf-8', payload: '' };
+    setFiles((prev) => [...prev, entry]);
     setSelectedPath(normalized);
     setNewPath('');
     setAddPathOpen(false);
+    scheduleCloudFileSync(entry);
   };
 
   const ingestUpload: UploadProps['customRequest'] = async (options) => {
@@ -163,6 +304,19 @@ export function SandboxImageBuildPage() {
         return [...without, entry];
       });
       setSelectedPath(entry.relativePath);
+      if (cloudActive) {
+        setCloudSyncing(true);
+        try {
+          const contextId = await ensureDraftContext();
+          if (contextId) {
+            await uploadFileToOss(entry, contextId);
+            setLastCloudSyncAt(new Date().toLocaleTimeString());
+            message.success(`${entry.relativePath} 已上传到 OSS`);
+          }
+        } finally {
+          setCloudSyncing(false);
+        }
+      }
       options.onSuccess?.(entry);
     } catch {
       options.onError?.(new Error('upload failed'));
@@ -170,52 +324,8 @@ export function SandboxImageBuildPage() {
     }
   };
 
-  const handleSaveDraft = async () => {
-    if (!cloudPersisted || adminNeedsTenant) {
-      message.warning('云端草稿未启用，或 Admin 需先选择租户。');
-      return;
-    }
-    if (!validation.ok) {
-      message.error(validation.errors[0] ?? '构建上下文校验失败');
-      return;
-    }
-    const name = displayName.trim();
-    if (!name) {
-      message.error('请填写草稿名称。');
-      return;
-    }
-    setCloudSaving(true);
-    try {
-      let contextId = draftId;
-      if (!contextId) {
-        const created = await buildContextApi.create(
-          { displayName: name, dockerfilePath },
-          tenantScope,
-        );
-        contextId = created.id;
-        setDraftId(contextId);
-      } else {
-        await buildContextApi.patch(contextId, { displayName: name, dockerfilePath }, tenantScope);
-      }
-      for (const file of files) {
-        await buildContextApi.putFile(
-          contextId,
-          file.relativePath,
-          { encoding: file.encoding, content: file.payload },
-          tenantScope,
-        );
-      }
-      message.success('草稿已保存到 PostgreSQL + OSS');
-      await refreshCloudDrafts();
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '保存草稿失败');
-    } finally {
-      setCloudSaving(false);
-    }
-  };
-
   const handleLoadDraft = async (contextId: string) => {
-    if (!cloudPersisted || adminNeedsTenant) {
+    if (!cloudActive) {
       return;
     }
     setCloudLoading(true);
@@ -239,11 +349,52 @@ export function SandboxImageBuildPage() {
       setDisplayName(ctx.displayName);
       setDraftId(ctx.id);
       setSelectedPath(ctx.dockerfilePath || DEFAULT_DOCKERFILE_PATH);
-      message.success('已加载云端草稿');
+      message.success('已加载草稿，可继续编辑');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '加载草稿失败');
     } finally {
       setCloudLoading(false);
+    }
+  };
+
+  const handleDeleteDraft = async (contextId: string) => {
+    if (!cloudActive) {
+      return;
+    }
+    try {
+      await buildContextApi.remove(contextId, tenantScope);
+      if (draftId === contextId) {
+        setDraftId(null);
+        setFiles(createDefaultContextFiles());
+        setDockerfilePath(DEFAULT_DOCKERFILE_PATH);
+        setSelectedPath(DEFAULT_DOCKERFILE_PATH);
+      }
+      message.success('已删除草稿');
+      await refreshCloudDrafts();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '删除失败');
+    }
+  };
+
+  const handleDownloadTarFromOss = async (contextId: string, buildIfNeeded: boolean) => {
+    try {
+      let url: string;
+      if (buildIfNeeded) {
+        await syncAllFilesToOss();
+        const built = await buildContextApi.buildTar(contextId, tenantScope);
+        url = built.downloadUrl;
+      } else {
+        const existing = await buildContextApi.getTarUrl(contextId, tenantScope);
+        url = existing.downloadUrl;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      if (!buildIfNeeded) {
+        const built = await buildContextApi.buildTar(contextId, tenantScope);
+        window.open(built.downloadUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      message.error('OSS tar 下载失败');
     }
   };
 
@@ -257,7 +408,17 @@ export function SandboxImageBuildPage() {
       const byteMap = contextFilesToByteMap(files);
       const gz = await packBuildContextTarGz(byteMap);
       downloadBlob(new Blob([gz], { type: 'application/gzip' }), 'sandbox-build-context.tar.gz');
-      message.success('已下载 context.tar.gz，可在本地 docker build 使用。');
+
+      if (cloudActive) {
+        const contextId = await syncAllFilesToOss();
+        if (contextId) {
+          const built = await buildContextApi.buildTar(contextId, tenantScope);
+          message.success('已本地下载，并在 OSS 生成 context.tar.gz');
+          window.open(built.downloadUrl, '_blank', 'noopener,noreferrer');
+        }
+      } else {
+        message.success('已下载 context.tar.gz（仅本地）。');
+      }
     } catch (err) {
       message.error(err instanceof Error ? err.message : '打包失败');
     } finally {
@@ -265,13 +426,74 @@ export function SandboxImageBuildPage() {
     }
   };
 
+  const handleNewDraft = () => {
+    setDraftId(null);
+    setDisplayName('我的沙箱镜像草稿');
+    setFiles(createDefaultContextFiles());
+    setDockerfilePath(DEFAULT_DOCKERFILE_PATH);
+    setSelectedPath(DEFAULT_DOCKERFILE_PATH);
+  };
+
+  const draftColumns = [
+    {
+      title: '名称',
+      dataIndex: 'displayName',
+      key: 'displayName',
+      ellipsis: true,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 88,
+      render: (status: string) => (
+        <Tag color={status === 'ready' ? 'green' : 'blue'}>{status === 'ready' ? '已打包' : '草稿'}</Tag>
+      ),
+    },
+    {
+      title: '文件数',
+      key: 'files',
+      width: 72,
+      render: (_: unknown, row: BuildContextItem) => fileCount(row),
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updatedAt',
+      key: 'updatedAt',
+      width: 168,
+      render: (value: string | undefined) => value?.replace('T', ' ').slice(0, 19) ?? '—',
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 220,
+      render: (_: unknown, row: BuildContextItem) => (
+        <Space size="small" wrap>
+          <Button type="link" size="small" onClick={() => void handleLoadDraft(row.id)}>
+            继续编辑
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => void handleDownloadTarFromOss(row.id, true)}
+          >
+            下载 tar
+          </Button>
+          <Button type="link" size="small" danger onClick={() => void handleDeleteDraft(row.id)}>
+            删除
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <div>
       <Typography.Title level={4} style={{ marginTop: 0 }}>
         沙箱镜像制作
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        编辑 Docker 构建上下文：可本地下载 tar.gz，或在启用 BFF 历史库与 OSS 后保存租户草稿。
+        编辑 Dockerfile 与构建上下文文件。启用 OSS 后，上传与编辑器内容会自动同步；打包时生成 tar.gz 并写入 OSS 供下载。
       </Typography.Paragraph>
 
       {user?.role === 'admin' ? (
@@ -280,71 +502,69 @@ export function SandboxImageBuildPage() {
         </div>
       ) : null}
 
-      {cloudPersisted ? (
-        <Card title="云端草稿（Phase 2a）" size="small" style={{ marginBottom: 16 }}>
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            <Input
-              addonBefore="名称"
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="草稿显示名称"
-            />
-            <Space wrap>
-              <Button
-                icon={<CloudUploadOutlined />}
-                loading={cloudSaving}
-                disabled={adminNeedsTenant}
-                onClick={() => void handleSaveDraft()}
-              >
-                保存草稿
+      <Card
+        title="Dockerfile 半成品列表"
+        size="small"
+        style={{ marginBottom: 16 }}
+        extra={
+          cloudActive ? (
+            <Space>
+              <Button size="small" icon={<PlusOutlined />} onClick={handleNewDraft}>
+                新建半成品
               </Button>
-              <Select
-                style={{ minWidth: 260 }}
-                placeholder="加载已有草稿"
-                loading={cloudLoading}
-                disabled={adminNeedsTenant}
-                options={cloudDrafts.map((item) => ({
-                  value: item.id,
-                  label: `${item.displayName} (${item.updatedAt?.slice(0, 10) ?? item.id.slice(0, 8)})`,
-                }))}
-                onChange={(value) => void handleLoadDraft(value)}
-                value={draftId ?? undefined}
-              />
-              {draftId ? (
-                <Button
-                  icon={<CloudDownloadOutlined />}
-                  disabled={adminNeedsTenant}
-                  onClick={() =>
-                    void (async () => {
-                      try {
-                        const tar = await buildContextApi.buildTar(draftId, tenantScope);
-                        window.open(tar.downloadUrl, '_blank', 'noopener,noreferrer');
-                      } catch (err) {
-                        message.error(err instanceof Error ? err.message : '生成 OSS tar 失败');
-                      }
-                    })()
-                  }
-                >
-                  OSS 打包下载
-                </Button>
+              {cloudSyncing ? <Tag icon={<CloudSyncOutlined spin />}>同步 OSS</Tag> : null}
+              {lastCloudSyncAt ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  最近同步 {lastCloudSyncAt}
+                </Typography.Text>
               ) : null}
             </Space>
-            {draftId ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                当前草稿 ID：{draftId}
-              </Typography.Text>
-            ) : null}
-          </Space>
-        </Card>
-      ) : (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="云端草稿未配置"
-          description="开启 BFF_HISTORY_ENABLED、BFF_IMAGE_BUILD_ENABLED 与 OSS 凭证后可保存草稿；当前仍可使用本地下载。"
-        />
-      )}
+          ) : null
+        }
+      >
+        {cloudActive ? (
+          <>
+            <Space style={{ marginBottom: 12 }} wrap>
+              <Input
+                addonBefore="当前名称"
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                onBlur={() => {
+                  if (draftId) {
+                    void buildContextApi.patch(
+                      draftId,
+                      { displayName: displayName.trim(), dockerfilePath },
+                      tenantScope,
+                    );
+                  }
+                }}
+                style={{ minWidth: 280 }}
+              />
+              {draftId ? (
+                <Tag color="processing">编辑中：{draftId.slice(0, 8)}…</Tag>
+              ) : (
+                <Tag>未绑定草稿（上传或编辑后将自动创建）</Tag>
+              )}
+            </Space>
+            <Table
+              rowKey="id"
+              size="small"
+              loading={cloudLoading}
+              dataSource={cloudDrafts}
+              columns={draftColumns}
+              pagination={{ pageSize: 5, hideOnSinglePage: true }}
+              rowClassName={(row) => (row.id === draftId ? 'ant-table-row-selected' : '')}
+            />
+          </>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message="云端草稿未配置"
+            description="请在 BFF 开启 BFF_HISTORY_ENABLED、BFF_IMAGE_BUILD_ENABLED 与 OSS 凭证。当前仅支持浏览器本地 tar 打包下载。"
+          />
+        )}
+      </Card>
 
       {!validation.ok ? (
         <Alert
@@ -366,7 +586,9 @@ export function SandboxImageBuildPage() {
           showIcon
           style={{ marginBottom: 16 }}
           message="构建上下文已通过校验"
-          description={`Dockerfile 路径：${validation.dockerfilePath}，共 ${files.length} 个文件。`}
+          description={`Dockerfile 路径：${validation.dockerfilePath}，共 ${files.length} 个文件。${
+            cloudActive ? ' 文本保存约 1 秒后自动上传 OSS。' : ''
+          }`}
         />
       )}
 
@@ -408,6 +630,11 @@ export function SandboxImageBuildPage() {
             <Input
               value={dockerfilePath}
               onChange={(event) => setDockerfilePath(event.target.value)}
+              onBlur={() => {
+                if (cloudActive && draftId) {
+                  void buildContextApi.patch(draftId, { dockerfilePath }, tenantScope);
+                }
+              }}
               placeholder="Dockerfile"
             />
           </Card>
@@ -450,17 +677,17 @@ export function SandboxImageBuildPage() {
               <Typography.Text type="secondary">在左侧选择要编辑的文件。</Typography.Text>
             )}
           </Card>
-          <Space style={{ marginTop: 16 }}>
+          <Space style={{ marginTop: 16 }} wrap>
             <Button
               type="primary"
               icon={<DownloadOutlined />}
-              loading={downloading}
+              loading={downloading || cloudSyncing}
               onClick={() => void handleDownloadTar()}
             >
-              下载 context.tar.gz
+              {cloudActive ? '打包 tar.gz（本地 + OSS）' : '下载 context.tar.gz'}
             </Button>
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-              本地示例：docker build -f {dockerfilePath} -t my-sandbox:latest .
+              docker build -f {dockerfilePath} -t my-sandbox:latest .
             </Typography.Text>
           </Space>
         </Col>

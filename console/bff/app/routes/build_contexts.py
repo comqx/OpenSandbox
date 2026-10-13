@@ -182,3 +182,17 @@ async def get_build_context_tar(
         return build_service.tar_download_url(settings, tenant_id, context_id)
     except BuildContextError as exc:
         raise _error(exc) from exc
+
+
+@router.delete("/{context_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_build_context(
+    context_id: str,
+    payload: dict = Depends(get_session_payload),
+    tenant: str | None = Query(default=None),
+) -> None:
+    settings = get_settings()
+    tenant_id = _tenant_scope(payload, tenant)
+    try:
+        build_service.delete_context(settings, tenant_id, context_id)
+    except BuildContextError as exc:
+        raise _error(exc) from exc

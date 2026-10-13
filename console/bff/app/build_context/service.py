@@ -348,3 +348,21 @@ def tar_download_url(settings: Settings, tenant_id: str, context_id: str) -> dic
         "tarSha256": existing.get("tarSha256"),
         "tarSizeBytes": existing.get("tarSizeBytes"),
     }
+
+
+def delete_context(settings: Settings, tenant_id: str, context_id: str) -> None:
+    _require_enabled(settings)
+    existing = build_store.get_context(tenant_id, context_id)
+    if existing is None:
+        raise BuildContextError("NOT_FOUND", "Build context not found", 404)
+    oss = BuildContextOss(settings)
+    files_meta: dict[str, Any] = existing.get("manifest", {}).get("files") or {}
+    for meta in files_meta.values():
+        oss_key = meta.get("ossKey") if isinstance(meta, dict) else None
+        if oss_key:
+            oss.delete_object(str(oss_key))
+    tar_key = existing.get("tarOssKey")
+    if tar_key:
+        oss.delete_object(str(tar_key))
+    if not build_store.delete_context(tenant_id, context_id):
+        raise BuildContextError("NOT_FOUND", "Build context not found", 404)

@@ -363,6 +363,23 @@ export const buildContextApi = {
       `/api/images/build-contexts/${encodeURIComponent(id)}/tar${tenantQueryParam(tenant)}`,
       { method: 'POST' },
     ),
+  getTarUrl: (id: string, tenant?: string) =>
+    apiRequest<{ downloadUrl: string; tarSha256?: string; tarSizeBytes?: number }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/tar${tenantQueryParam(tenant)}`,
+    ),
+  deleteFile: (id: string, path: string, tenant?: string) =>
+    apiRequest<void>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/files/${path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}${tenantQueryParam(tenant)}`,
+      { method: 'DELETE' },
+    ),
+  remove: (id: string, tenant?: string) =>
+    apiRequest<void>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
+      { method: 'DELETE' },
+    ),
 };
 
 export const imageCatalogApi = {
