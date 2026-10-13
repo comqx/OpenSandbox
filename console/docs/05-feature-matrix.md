@@ -20,6 +20,7 @@ Core lifecycle flows go through the **BFF**; optional **server lifecycle audit**
 | Create sandbox | ✅ | `POST /api/sandboxes` | `/sandboxes/new` |
 | Renew / delete | ✅ | renew / DELETE | detail |
 | Endpoint | ✅ | `.../endpoints/{port}` | detail |
+| Sandbox shell | ✅ | WebSocket bridge to execd PTY | `/sandboxes/:id/shell` |
 | Runtime / TTL summary | ✅ | `runtimeSummary` | list / detail |
 | Pause / resume | 🔶 | pause / resume | detail |
 | Tenant overview KPI | ✅ | list aggregation | `/` |
@@ -35,6 +36,7 @@ Core lifecycle flows go through the **BFF**; optional **server lifecycle audit**
 | Runtime stats | ✅ | `/api/admin/stats/runtime` | `/` (admin) |
 | Snapshots | ✅ | tenant + admin | `/snapshots` |
 | Diagnostics | ✅ | logs / events | `/diagnostics` |
+| Sandbox shell | ✅ | `?tenant=` PTY bridge | `/sandboxes/:id/shell` |
 | Pools | ✅ | `/api/pools*` | `/pools` |
 | Admin sandbox ops | ✅ | `?tenant=` proxy | `/sandboxes/:id` |
 | Component health | 🔶 | K8s deployments + node-agent | `/platform/health` |

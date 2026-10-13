@@ -24,6 +24,7 @@ import { SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import type { Sandbox, SandboxHistoryItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { formatDateTime, formatDuration, sandboxDisplayName } from '../utils/format';
+import { sandboxShellPath } from '../utils/shellPath';
 
 export function SandboxDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -328,6 +329,15 @@ export function SandboxDetailPage() {
                             恢复
                           </Button>
                           <Button onClick={() => void load()}>刷新</Button>
+                          <Button
+                            disabled={state !== 'Running' || !id}
+                            onClick={() =>
+                              id &&
+                              navigate(sandboxShellPath(id, isAdminProxy ? adminTenant : undefined))
+                            }
+                          >
+                            Shell
+                          </Button>
                         </Space>
                       </>
                     )}

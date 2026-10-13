@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.lifecycle import LifecycleClient
 from app.history.store import close_history_pool, init_history_pool
 from app.platform_settings import init_platform_settings
-from app.routes import admin, auth, history, platform, pools, sandboxes, snapshots
+from app.routes import admin, auth, history, platform, pools, sandboxes, shell, snapshots
 
 app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
 
@@ -65,6 +65,7 @@ app.add_middleware(
 api = FastAPI()
 api.include_router(auth.router)
 api.include_router(sandboxes.router)
+api.include_router(shell.router)
 api.include_router(snapshots.router)
 api.include_router(pools.router)
 api.include_router(admin.router)

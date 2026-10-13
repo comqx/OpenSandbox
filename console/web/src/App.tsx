@@ -32,6 +32,7 @@ import { SandboxImageListPage } from './pages/SandboxImageListPage';
 import { SandboxImageStatsPage } from './pages/SandboxImageStatsPage';
 import { TenantUsagePage } from './pages/TenantUsagePage';
 import { SandboxListPage } from './pages/SandboxListPage';
+import { SandboxShellPage } from './pages/SandboxShellPage';
 import { SnapshotsPage } from './pages/SnapshotsPage';
 import { ComponentHealthPage } from './pages/platform/ComponentHealthPage';
 import { K8sEventsPage } from './pages/platform/K8sEventsPage';
@@ -81,6 +82,7 @@ export default function App() {
               <Route index element={<OverviewPage />} />
               <Route path="sandboxes" element={<SandboxListPage />} />
               <Route path="sandboxes/new" element={<SandboxCreatePage />} />
+              <Route path="sandboxes/:id/shell" element={<SandboxShellPage />} />
               <Route path="history/sandboxes" element={<SandboxHistoryPage />} />
               <Route path="images/list" element={<SandboxImageListPage />} />
               <Route path="history/images" element={<SandboxImageStatsPage />} />
