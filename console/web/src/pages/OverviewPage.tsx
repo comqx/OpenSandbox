@@ -575,7 +575,7 @@ export function OverviewPage() {
               <div style={{ maxWidth: 480, margin: '0 auto', textAlign: 'left' }}>
                 <Typography.Paragraph strong>为什么历史是 0？</Typography.Paragraph>
                 <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-                  数据写在 PostgreSQL 表 <code>console_sandbox_history</code>，只有经 Console 创建、列表或删除同步过的沙箱才会入库。
+                  数据写在 PostgreSQL 表 <code>sandbox_lifecycle_history</code>。Server 开启生命周期审计后，SDK 创建也会入库；否则主要依赖 Console 或对账。
                 </Typography.Paragraph>
                 <ul style={{ paddingLeft: 20, margin: 0, color: 'rgba(0,0,0,0.45)' }}>
                   <li>打开本页会按租户拉 Lifecycle 现网列表并入库；若仍为 0，可能当前无沙箱或 Lifecycle 对账失败</li>

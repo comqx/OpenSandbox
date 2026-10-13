@@ -20,7 +20,7 @@ export const USAGE_METRIC_HINTS = {
   sandboxCount:
     '统计区间内，生命周期与窗口 [from, to) 有交集的沙箱条数（与「占用时长」同一批实例；每条 history 计 1）。' +
     '点击数字可跳转申请历史并带上相同区间筛选。' +
-    '不含 SDK 直连 Lifecycle 且未写入 console_sandbox_history 的实例；不等于概览「列表中的沙箱数」或申请历史「历史条数」。',
+    '不含未写入 sandbox_lifecycle_history 的实例（需 Server 生命周期审计或 Console/对账）；不等于概览「列表中的沙箱数」。',
   overlapSeconds:
     '统计区间内，每条沙箱从创建到结束（销毁/终止）的生命周期与区间交集时长之和（秒）。',
   cpuCoreSeconds:
