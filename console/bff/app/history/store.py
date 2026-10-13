@@ -161,6 +161,37 @@ def _ensure_schema(pool: ConnectionPool) -> None:
                 ON console_sandbox_image_catalog (image_uri)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS console_sandbox_build_context (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
+                dockerfile_path TEXT NOT NULL DEFAULT 'Dockerfile',
+                tar_oss_key TEXT,
+                tar_sha256 TEXT,
+                tar_size_bytes BIGINT,
+                created_by TEXT NOT NULL DEFAULT '',
+                updated_by TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_console_sandbox_build_context_tenant_updated
+                ON console_sandbox_build_context (tenant_id, updated_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_console_sandbox_build_context_tenant_status
+                ON console_sandbox_build_context (tenant_id, status)
+            """
+        )
 
 
 def history_pool_available() -> bool:

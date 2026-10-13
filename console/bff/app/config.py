@@ -83,6 +83,17 @@ class Settings(BaseSettings):
     # Optional JSON file for the sandbox image catalog when history DB is disabled
     bff_image_catalog_path: str = ""
 
+    # Sandbox image build context drafts (PostgreSQL + OSS; requires BFF_HISTORY_ENABLED)
+    bff_image_build_enabled: bool = False
+    bff_image_build_max_files: int = 256
+    bff_image_build_max_file_bytes: int = 5 * 1024 * 1024
+    bff_image_build_max_total_bytes: int = 50 * 1024 * 1024
+    bff_image_build_oss_endpoint: str = ""
+    bff_image_build_oss_bucket: str = ""
+    bff_image_build_oss_key_prefix: str = "console/image-build"
+    bff_image_build_oss_access_key_id: str = ""
+    bff_image_build_oss_access_key_secret: str = ""
+
     @property
     def cors_origins_list(self) -> list[str]:
         if self.bff_cors_origins.strip() == "*":

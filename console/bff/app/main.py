@@ -25,7 +25,7 @@ from app.lifecycle import LifecycleClient
 from app.history.store import close_history_pool, init_history_pool
 from app.image_catalog import init_image_catalog
 from app.platform_settings import init_platform_settings
-from app.routes import admin, auth, history, images, platform, pools, sandboxes, shell, snapshots
+from app.routes import admin, auth, build_contexts, history, images, platform, pools, sandboxes, shell, snapshots
 
 app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
 _history_poll_task: asyncio.Task[None] | None = None
@@ -87,6 +87,7 @@ api.include_router(pools.router)
 api.include_router(admin.router)
 api.include_router(history.router)
 api.include_router(images.router)
+api.include_router(build_contexts.router)
 api.include_router(platform.router)
 api.include_router(platform.admin_router)
 app.mount("/api", api)
