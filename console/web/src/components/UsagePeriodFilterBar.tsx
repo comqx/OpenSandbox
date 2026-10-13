@@ -46,12 +46,15 @@ export function UsagePeriodFilterBar({
   range,
   onRangeChange,
   allowAllTime = false,
+  allTimeLabel,
   trailing,
 }: {
   /** Inclusive UTC day range; `null` means all time when {@link allowAllTime} is true. */
   range: [Dayjs, Dayjs] | null;
   onRangeChange: (range: [Dayjs, Dayjs] | null) => void;
   allowAllTime?: boolean;
+  /** Overrides the preset label for the all-time option. */
+  allTimeLabel?: string;
   trailing?: ReactNode;
 }) {
   const matched = useMemo(
@@ -59,7 +62,13 @@ export function UsagePeriodFilterBar({
     [allowAllTime, range],
   );
 
-  const selectOptions = useMemo(() => buildSelectOptions(allowAllTime), [allowAllTime]);
+  const selectOptions = useMemo(() => {
+    const options = buildSelectOptions(allowAllTime);
+    if (!allTimeLabel) return options;
+    return options.map((option) =>
+      option.value === 'all' ? { ...option, label: allTimeLabel } : option,
+    );
+  }, [allTimeLabel, allowAllTime]);
 
   const onPresetSelect = (key: UsagePeriodPreset) => {
     if (key === 'custom') return;

@@ -20,6 +20,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { sandboxApi } from '../api/client';
 import type { Sandbox } from '../api/types';
+import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import { SandboxStateTag } from '../components/SemanticTags';
 import { formatDateTime, formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
 import { sandboxShellPath } from '../utils/shellPath';
@@ -54,6 +55,7 @@ export function SandboxListPage() {
         <Link to={`/sandboxes/${r.id}`}>{sandboxDisplayName(r)}</Link>
       ),
     },
+    sandboxLabelsColumn<Sandbox>(),
     {
       title: '状态',
       dataIndex: ['status', 'state'],
@@ -117,7 +119,14 @@ export function SandboxListPage() {
           </Button>
         </Space>
       </Space>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={false} />
+      <Table
+        rowKey="id"
+        loading={loading}
+        columns={columns}
+        dataSource={items}
+        pagination={false}
+        scroll={{ x: 'max-content' }}
+      />
     </div>
   );
 }

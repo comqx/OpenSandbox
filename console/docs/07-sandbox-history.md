@@ -4,8 +4,8 @@ Uses **shared PostgreSQL** (e.g. database `opensandbox`). Single table **`sandbo
 
 | Writer | When | Fields |
 |--------|------|--------|
-| **Server** (`[store.lifecycle_audit] enabled=true`) | After successful Lifecycle create/delete (async) | tenant, image, status, timestamps, limit summary |
-| **Console BFF** | Console create/list/reconcile/delete | same + `create_request`, `source=console*`, etc. |
+| **Server** (`[store.lifecycle_audit] enabled=true`) | After successful Lifecycle create/delete (async) | tenant, image, status, timestamps, limit summary, `metadata` (sandbox labels) |
+| **Console BFF** | Console create/list/reconcile/delete | same columns except it does not write `metadata`; `create_request`, `source=console*` |
 
 SDK/script calls to the server are recorded by server audit on create and delete only. The BFF polls Lifecycle every **`BFF_HISTORY_RECONCILE_INTERVAL_SECONDS`** (default 600) and closes sandboxes that expired or disappeared without a delete call. A row with `expires_at` already in the past is closed at that expiration time, not at the poll clock. History pages only read the table. Set **`BFF_HISTORY_RECONCILE_ON_READ=true`** only if a history request should scan Lifecycle itself. Set the interval to `0` to disable the poller; rows then stay `Running` until an explicit delete.
 
@@ -35,6 +35,12 @@ BFF runs `CREATE TABLE IF NOT EXISTS sandbox_lifecycle_history` only (no import 
 ## Reads
 
 History, usage, and image stats query **`sandbox_lifecycle_history`** only.
+
+`GET /api/history/stats` accepts optional `from` and `to` (UTC, `to` exclusive). With both, counts and durations include only rows whose lifetime overlaps `[from, to)`, and duration is clipped to that window. Without them, totals use stored `wall_clock_seconds` for the whole history. The overview always sends a window, including a wide one for 历史累计, so its duration stays on the overlap formula. The response includes `tenants[]` (`tenant`, `totalRecords`, `activeRecords`, `totalWallClockSeconds`, `avgWallClockSeconds`). `activeRecords` is still “not ended now”, among the rows in scope.
+
+Usage CPU·秒 and 内存·Gi·秒 skip rows that have no create-time `resourceLimits`. Those rows still count toward sandbox count and overlap duration. The API does not fill them with 1 core / 512Mi. `totals.limitsMissing` is how many in-scope rows were skipped for at least one of those two metrics.
+
+`metadata` is the sandbox label map. The Server writes it on lifecycle create and delete. History list accepts `label`: a case-insensitive substring matched against each key, value, or `key=value`. Space-separated terms are AND. Rows created before that Server change have no labels unless `create_request.metadata` was stored by the console.
 
 ## API
 

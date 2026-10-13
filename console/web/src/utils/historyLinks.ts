@@ -17,11 +17,24 @@ export function historySandboxesPath(opts: {
   from?: string;
   to?: string;
   tenant?: string;
+  /** Keep the history page on all records. Omitting dates otherwise opens as the current month. */
+  allTime?: boolean;
 }): string {
   const params = new URLSearchParams();
-  if (opts.from) params.set('from', opts.from);
-  if (opts.to) params.set('to', opts.to);
+  if (opts.allTime) {
+    params.set('period', 'all');
+  } else {
+    if (opts.from) params.set('from', opts.from);
+    if (opts.to) params.set('to', opts.to);
+  }
   if (opts.tenant) params.set('tenant', opts.tenant);
   const qs = params.toString();
   return `/history/sandboxes${qs ? `?${qs}` : ''}`;
+}
+
+/** Link to用量分摊 with the same UTC window the overview is showing. */
+export function historyUsagePath(opts: { from: string; to: string; tenant?: string }): string {
+  const params = new URLSearchParams({ from: opts.from, to: opts.to });
+  if (opts.tenant) params.set('tenant', opts.tenant);
+  return `/history/usage?${params}`;
 }

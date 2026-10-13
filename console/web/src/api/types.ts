@@ -87,12 +87,22 @@ export interface SandboxHistoryItem {
   source?: string;
   firstRecordedAt?: string;
   lastSeenAt?: string;
+  /** 创建时写入的 metadata，即沙箱标签 */
+  metadata?: Record<string, string>;
   /** 创建时的 Kubernetes resourceLimits（来自历史入库） */
   resourceLimits?: ResourceLimitsMap;
   resourceRequests?: ResourceLimitsMap;
   cpuCores?: number;
   memoryGi?: number;
   createTimeoutSeconds?: number;
+}
+
+export interface HistoryTenantStatsRow {
+  tenant: string;
+  totalRecords: number;
+  activeRecords: number;
+  totalWallClockSeconds: number;
+  avgWallClockSeconds: number;
 }
 
 export interface SandboxHistoryStats {
@@ -102,6 +112,8 @@ export interface SandboxHistoryStats {
   totalWallClockSeconds?: number;
   avgWallClockSeconds?: number;
   asOf?: string;
+  period?: { from?: string; to?: string };
+  tenants?: HistoryTenantStatsRow[];
 }
 
 export interface ImageStatsRow {
@@ -161,6 +173,8 @@ export interface TenantUsageResponse {
     overlapSeconds?: number;
     cpuCoreSeconds?: number;
     memoryGiSeconds?: number;
+    /** Rows counted in sandbox/time totals but missing create-time limits for CPU or memory. */
+    limitsMissing?: number;
   };
   tenants?: TenantUsageRow[];
 }

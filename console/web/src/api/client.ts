@@ -342,9 +342,15 @@ export const historyApi = {
       `/api/history/sandboxes${qs ? `?${qs}` : ''}`,
     );
   },
-  stats: (tenant?: string) => {
-    const qs = tenant ? `?tenant=${encodeURIComponent(tenant)}` : '';
-    return apiRequest<import('./types').SandboxHistoryStats>(`/api/history/stats${qs}`);
+  stats: (query?: { tenant?: string; from?: string; to?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.tenant) params.set('tenant', query.tenant);
+    if (query?.from) params.set('from', query.from);
+    if (query?.to) params.set('to', query.to);
+    const qs = params.toString();
+    return apiRequest<import('./types').SandboxHistoryStats>(
+      `/api/history/stats${qs ? `?${qs}` : ''}`,
+    );
   },
   usage: (query: { from: string; to: string; tenant?: string }) => {
     const params = new URLSearchParams({ from: query.from, to: query.to });

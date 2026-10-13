@@ -40,6 +40,27 @@ const TENANT_TAG_COLORS = [
 
 export type TenantTagColor = (typeof TENANT_TAG_COLORS)[number];
 
+const LABEL_TAG_COLORS = [
+  'magenta',
+  'red',
+  'volcano',
+  'orange',
+  'gold',
+  'lime',
+  'green',
+  'cyan',
+  'blue',
+  'geekblue',
+  'purple',
+] as const;
+
+/** 同一个标签键始终落到同一种颜色。 */
+export function labelTagColor(key: string): (typeof LABEL_TAG_COLORS)[number] {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 33 + key.charCodeAt(i)) >>> 0;
+  return LABEL_TAG_COLORS[h % LABEL_TAG_COLORS.length];
+}
+
 /** 租户名稳定映射到 Tag 色，全站表格一致。 */
 export function tenantTagColor(tenant: string): TenantTagColor {
   let h = 0;

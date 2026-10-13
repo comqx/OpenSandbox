@@ -24,9 +24,9 @@ export const USAGE_METRIC_HINTS = {
   overlapSeconds:
     '统计区间内，每条沙箱从创建到结束（销毁/终止）的生命周期与区间交集时长之和（秒）。',
   cpuCoreSeconds:
-    'Σ ( CPU limits 换算成核数 × 该沙箱占用秒数 )。limits 来自创建时的 resourceLimits.cpu（如 500m→0.5 核）。按 limit 满额计算，不是实际 CPU 利用率。例：0.5 核运行 10 分钟 → 0.5 × 600 = 300 CPU·秒。',
+    'Σ ( CPU limits 换算成核数 × 该沙箱占用秒数 )。limits 来自创建时的 resourceLimits.cpu（如 500m→0.5 核）。按 limit 满额计算，不是实际 CPU 利用率。没有记录 limits 的沙箱不计入。例：0.5 核运行 10 分钟 → 0.5 × 600 = 300 CPU·秒。',
   memoryGiSeconds:
-    'Σ ( 内存 limits 换算成 GiB × 该沙箱占用秒数 )。limits 来自 resourceLimits.memory（如 10Gi→10）。按 limit 满额计算。例：10 GiB 运行 10 分钟 → 10 × 600 = 6000 内存·Gi·秒。',
+    'Σ ( 内存 limits 换算成 GiB × 该沙箱占用秒数 )。limits 来自 resourceLimits.memory（如 10Gi→10）。按 limit 满额计算，不是实际利用率。没有记录 limits 的沙箱不计入。例：10 GiB 运行 10 分钟 → 10 × 600 = 6000 内存·Gi·秒。',
   shareTime: '该租户占用时长 ÷ 区间内全部 Console 历史沙箱占用时长 × 100%。',
   shareCpu: '该租户 CPU·秒 ÷ 全集群同区间 CPU·秒合计 × 100%。',
   shareMemory: '该租户内存·Gi·秒 ÷ 全集群同区间内存·Gi·秒合计 × 100%。',

@@ -66,6 +66,37 @@ limitations under the License.
   font-weight: 600 !important;
 }
 
+.overview-block {
+  margin-bottom: 8px;
+}
+
+.overview-subsection {
+  margin: 0 0 8px 2px;
+  padding-left: 12px;
+  border-left: 2px solid #d6e4ff;
+}
+
+.overview-subsection-label {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.overview-limits-note {
+  margin: -4px 0 8px !important;
+}
+
+.overview-block .overview-kpi-grid,
+.overview-block .overview-history-grid {
+  margin-bottom: 16px;
+}
+
+.overview-subsection + .overview-subsection {
+  margin-top: 4px;
+}
+
 .overview-live-card {
   border-radius: var(--overview-card-radius);
   margin-bottom: 24px;
@@ -246,7 +277,6 @@ limitations under the License.
 
 .overview-kpi-card .ant-card-body {
   padding: 16px 18px 14px;
-  min-height: 132px;
   display: flex;
   flex-direction: column;
 }
@@ -291,7 +321,15 @@ limitations under the License.
 .overview-kpi-delta {
   font-size: 12px;
   font-weight: 500;
-  white-space: nowrap;
+  text-align: right;
+  line-height: 1.35;
+  max-width: 52%;
+}
+
+.overview-kpi-delta-basis {
+  display: block;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.45);
 }
 
 .overview-kpi-delta.up {
@@ -330,16 +368,12 @@ limitations under the License.
   color: #1677ff;
 }
 
-.overview-kpi-spark {
-  margin-top: 8px;
-  opacity: 0.85;
-}
-
 .overview-history-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin-top: 12px;
+  margin-bottom: 24px;
 }
 
 @media (max-width: 768px) {
@@ -410,6 +444,10 @@ limitations under the License.
 
 .overview-tenant-metric--count {
   color: #1677ff;
+}
+
+.overview-tenant-metric--active {
+  color: #52c41a;
 }
 
 .overview-tenant-metric--time {

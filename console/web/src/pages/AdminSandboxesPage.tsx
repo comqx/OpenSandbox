@@ -15,10 +15,11 @@
 import { Alert, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { adminApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import type { Sandbox } from '../api/types';
 import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
@@ -27,7 +28,8 @@ import { sandboxShellPath } from '../utils/shellPath';
 export function AdminSandboxesPage() {
   const [loading, setLoading] = useState(false);
   const [stateFilter, setStateFilter] = useState<string | undefined>();
-  const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [searchParams] = useSearchParams();
+  const [tenantFilter, setTenantFilter] = useState(() => searchParams.get('tenant') || ALL_TENANTS);
   const [items, setItems] = useState<Sandbox[]>([]);
   const [tenantErrors, setTenantErrors] = useState<
     { tenant: string; code: string; message: string }[]
@@ -73,6 +75,7 @@ export function AdminSandboxesPage() {
       title: 'Namespace',
       dataIndex: 'namespace',
     },
+    sandboxLabelsColumn<Sandbox>(),
     {
       title: '状态',
       width: 124,
@@ -147,7 +150,14 @@ export function AdminSandboxesPage() {
           options={SANDBOX_STATES.map((s) => ({ label: s, value: s }))}
         />
       </Space>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={false} />
+      <Table
+        rowKey="id"
+        loading={loading}
+        columns={columns}
+        dataSource={items}
+        pagination={false}
+        scroll={{ x: 'max-content' }}
+      />
     </div>
   );
 }

@@ -26,6 +26,8 @@ from app.config import Settings
 from app.history.resources import (
     explicit_resource_limits,
     limits_to_numbers,
+    parse_cpu_cores,
+    parse_memory_gi,
     resource_limits_dict,
 )
 from app.runtime import attach_runtime_summary
@@ -125,6 +127,9 @@ def _ensure_schema(pool: ConnectionPool) -> None:
             "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS memory_gi DOUBLE PRECISION"
         )
         conn.execute(
+            "ALTER TABLE sandbox_lifecycle_history ADD COLUMN IF NOT EXISTS metadata JSONB"
+        )
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS console_platform_settings (
                 id TEXT PRIMARY KEY,
@@ -174,6 +179,95 @@ def save_platform_settings_to_db(overrides: dict[str, Any]) -> None:
             """,
             (json.dumps(overrides),),
         )
+
+
+def _coerce_metadata(raw: Any) -> dict[str, str]:
+    """Normalize sandbox metadata to a string map. Empty or invalid input is {}."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        if value is None:
+            continue
+        name = str(key).strip()
+        if not name:
+            continue
+        out[name] = str(value)
+    return out
+
+
+def _metadata_from_row(row: dict[str, Any]) -> dict[str, str]:
+    stored = _coerce_metadata(row.get("metadata"))
+    if stored:
+        return stored
+    create_request = row.get("create_request")
+    if isinstance(create_request, str):
+        try:
+            create_request = json.loads(create_request)
+        except json.JSONDecodeError:
+            create_request = None
+    if isinstance(create_request, dict):
+        return _coerce_metadata(create_request.get("metadata"))
+    return {}
+
+
+def _label_terms(query: str | None) -> list[str]:
+    if not query:
+        return []
+    return [part for part in query.strip().split() if part]
+
+
+def _metadata_matches_label(metadata: dict[str, str], query: str | None) -> bool:
+    """Substring match on key, value, or key=value. Space-separated terms are AND."""
+    terms = _label_terms(query)
+    if not terms:
+        return True
+    pairs = [(key.lower(), value.lower(), f"{key}={value}".lower()) for key, value in metadata.items()]
+    for term in terms:
+        needle = term.lower()
+        if not any(needle in key or needle in value or needle in pair for key, value, pair in pairs):
+            return False
+    return True
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _label_where(alias: str, query: str | None) -> tuple[str, list[Any]]:
+    """SQL equivalent of _metadata_matches_label, including create_request fallback."""
+    terms = _label_terms(query)
+    if not terms:
+        return "", []
+    meta_expr = f"""
+        CASE
+            WHEN jsonb_typeof({alias}.metadata) = 'object'
+                 AND {alias}.metadata <> '{{}}'::jsonb
+                THEN {alias}.metadata
+            WHEN jsonb_typeof({alias}.create_request -> 'metadata') = 'object'
+                THEN {alias}.create_request -> 'metadata'
+            ELSE '{{}}'::jsonb
+        END
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    for term in terms:
+        pattern = f"%{_escape_like(term)}%"
+        clauses.append(
+            f"""EXISTS (
+                SELECT 1 FROM jsonb_each_text({meta_expr}) AS kv(k, v)
+                WHERE kv.k ILIKE %s ESCAPE '\\'
+                   OR kv.v ILIKE %s ESCAPE '\\'
+                   OR (kv.k || '=' || kv.v) ILIKE %s ESCAPE '\\'
+            )"""
+        )
+        params.extend([pattern, pattern, pattern])
+    return " AND " + " AND ".join(clauses), params
 
 
 def _image_uri(sandbox: dict[str, Any]) -> str | None:
@@ -516,6 +610,7 @@ def list_history(
     include_active: bool = True,
     period_from: datetime | None = None,
     period_to: datetime | None = None,
+    label: str | None = None,
 ) -> dict[str, Any]:
     if _pool is None:
         return {"items": [], "pagination": _empty_page(page, page_size)}
@@ -550,6 +645,10 @@ def list_history(
                 r
                 for r in matched
                 if r.get("deleted_at") is not None or r.get("state") in _TERMINAL
+            ]
+        if label:
+            matched = [
+                r for r in matched if _metadata_matches_label(_metadata_from_row(r), label)
             ]
         def _history_sort_key(row: dict[str, Any]) -> datetime:
             start = row.get("lifecycle_created_at") or row.get("first_recorded_at")
@@ -587,6 +686,9 @@ def list_history(
     if not include_active:
         where += " AND (h.deleted_at IS NOT NULL OR h.state = ANY(%s))"
         params.append(list(_TERMINAL))
+    label_sql, label_params = _label_where("h", label)
+    where += label_sql
+    params.extend(label_params)
 
     with _pool.connection() as conn:
         total = conn.execute(
@@ -649,11 +751,103 @@ def get_history_record(
     return _row_to_item(row)
 
 
-def history_stats(settings: Settings, *, tenant_name: str | None) -> dict[str, Any]:
+def _row_counts_as_active(row: dict[str, Any]) -> bool:
+    state = row.get("state")
+    return row.get("deleted_at") is None and isinstance(state, str) and state not in _TERMINAL
+
+
+def _pack_history_counts(total: int, active: int, wall: int) -> dict[str, int]:
+    return {
+        "totalRecords": total,
+        "activeRecords": active,
+        "totalWallClockSeconds": wall,
+        "avgWallClockSeconds": int(wall / total) if total else 0,
+    }
+
+
+def _aggregate_period_history_stats(
+    rows: list[dict[str, Any]],
+    *,
+    period_from: datetime,
+    period_to: datetime,
+    now: datetime,
+) -> dict[str, Any]:
+    """Records whose lifetime overlaps [period_from, period_to); duration is clipped to that window."""
+    buckets: dict[str, dict[str, int]] = {}
+    for row in rows:
+        seconds = _overlap_seconds_in_period(row, period_from=period_from, period_to=period_to, now=now)
+        if seconds <= 0:
+            continue
+        tenant = str(row.get("tenant_name") or "")
+        bucket = buckets.setdefault(tenant, {"total": 0, "active": 0, "wall": 0})
+        bucket["total"] += 1
+        bucket["wall"] += int(seconds)
+        if _row_counts_as_active(row):
+            bucket["active"] += 1
+
+    tenants = [
+        {"tenant": name, **_pack_history_counts(bucket["total"], bucket["active"], bucket["wall"])}
+        for name, bucket in buckets.items()
+    ]
+    tenants.sort(key=lambda item: (-int(item["totalRecords"]), str(item["tenant"])))
+    return {
+        **_pack_history_counts(
+            sum(bucket["total"] for bucket in buckets.values()),
+            sum(bucket["active"] for bucket in buckets.values()),
+            sum(bucket["wall"] for bucket in buckets.values()),
+        ),
+        "tenants": tenants,
+    }
+
+
+def history_stats(
+    settings: Settings,
+    *,
+    tenant_name: str | None,
+    period_from: datetime | None = None,
+    period_to: datetime | None = None,
+) -> dict[str, Any]:
     if _pool is None:
         return {"enabled": False}
+    if period_from is not None and period_to is not None:
+        period_from = period_from.astimezone(timezone.utc)
+        period_to = period_to.astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+        where = "WHERE COALESCE(lifecycle_created_at, first_recorded_at) < %s"
+        params: list[Any] = [period_to]
+        if tenant_name:
+            where += " AND tenant_name = %s"
+            params.append(tenant_name)
+        with _pool.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    tenant_name, state, deleted_at, ended_at,
+                    lifecycle_created_at, first_recorded_at,
+                    wall_clock_seconds, last_seen_at
+                FROM sandbox_lifecycle_history
+                {where}
+                """,
+                params,
+            ).fetchall()
+        aggregated = _aggregate_period_history_stats(
+            list(rows),
+            period_from=period_from,
+            period_to=period_to,
+            now=now,
+        )
+        return {
+            "enabled": True,
+            "asOf": now.isoformat().replace("+00:00", "Z"),
+            "period": {
+                "from": period_from.isoformat().replace("+00:00", "Z"),
+                "to": period_to.isoformat().replace("+00:00", "Z"),
+            },
+            **aggregated,
+        }
+
     where = ""
-    params: list[Any] = []
+    params = []
     if tenant_name:
         where = "WHERE tenant_name = %s"
         params.append(tenant_name)
@@ -670,6 +864,21 @@ def history_stats(settings: Settings, *, tenant_name: str | None) -> dict[str, A
             """,
             params,
         ).fetchone()
+        tenant_rows = conn.execute(
+            f"""
+            SELECT
+                tenant_name,
+                COUNT(*)::int AS total_records,
+                COUNT(*) FILTER (WHERE deleted_at IS NULL AND state NOT IN ('Terminated','Failed','Stopping'))::int AS active_records,
+                COALESCE(SUM(wall_clock_seconds) FILTER (WHERE wall_clock_seconds IS NOT NULL), 0)::bigint AS total_wall_clock_seconds,
+                COALESCE(AVG(wall_clock_seconds) FILTER (WHERE wall_clock_seconds IS NOT NULL), 0)::int AS avg_wall_clock_seconds
+            FROM sandbox_lifecycle_history
+            {where}
+            GROUP BY tenant_name
+            ORDER BY total_records DESC, tenant_name ASC
+            """,
+            params,
+        ).fetchall()
     return {
         "enabled": True,
         "asOf": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -677,6 +886,16 @@ def history_stats(settings: Settings, *, tenant_name: str | None) -> dict[str, A
         "activeRecords": int(row["active_records"]),
         "totalWallClockSeconds": int(row["total_wall_clock_seconds"]),
         "avgWallClockSeconds": int(row["avg_wall_clock_seconds"]),
+        "tenants": [
+            {
+                "tenant": str(item["tenant_name"] or ""),
+                "totalRecords": int(item["total_records"]),
+                "activeRecords": int(item["active_records"]),
+                "totalWallClockSeconds": int(item["total_wall_clock_seconds"]),
+                "avgWallClockSeconds": int(item["avg_wall_clock_seconds"]),
+            }
+            for item in tenant_rows
+        ],
     }
 
 
@@ -758,19 +977,29 @@ def image_stats(
     }
 
 
-def _row_cpu_memory(row: dict[str, Any]) -> tuple[float, float]:
-    cpu = row.get("cpu_cores")
-    mem = row.get("memory_gi")
+def _explicit_cpu_memory(row: dict[str, Any]) -> tuple[float | None, float | None]:
+    """CPU cores and memory Gi from stored columns or create-time limits.
+
+    Missing limits stay missing. Usage must not substitute the 1 core / 512Mi display default.
+    """
+    cpu_col = row.get("cpu_cores")
+    mem_col = row.get("memory_gi")
+    cpu = float(cpu_col) if cpu_col is not None else None
+    mem = float(mem_col) if mem_col is not None else None
     if cpu is not None and mem is not None:
-        return float(cpu), float(mem)
+        return cpu, mem
     cr = row.get("create_request")
     if isinstance(cr, str):
         try:
             cr = json.loads(cr)
         except json.JSONDecodeError:
             cr = None
-    limits = resource_limits_dict({}, cr if isinstance(cr, dict) else None)
-    _, _, cpu, mem = limits_to_numbers(limits)
+    explicit = explicit_resource_limits({}, cr if isinstance(cr, dict) else None)
+    if explicit:
+        if cpu is None and explicit.get("cpu"):
+            cpu = parse_cpu_cores(str(explicit["cpu"]))
+        if mem is None and explicit.get("memory"):
+            mem = parse_memory_gi(str(explicit["memory"]))
     return cpu, mem
 
 
@@ -815,6 +1044,7 @@ def usage_allocation(
                 "overlapSeconds": 0.0,
                 "cpuCoreSeconds": 0.0,
                 "memoryGiSeconds": 0.0,
+                "limitsMissing": 0,
             }
         return by_tenant[t]
 
@@ -822,25 +1052,31 @@ def usage_allocation(
         seconds = _overlap_seconds_in_period(row, period_from=period_from, period_to=period_to, now=now)
         if seconds <= 0:
             continue
-        cpu, mem = _row_cpu_memory(row)
+        cpu, mem = _explicit_cpu_memory(row)
         t = str(row["tenant_name"])
         b = bucket(t)
         b["sandboxCount"] = int(b["sandboxCount"]) + 1
         b["overlapSeconds"] = float(b["overlapSeconds"]) + seconds
-        b["cpuCoreSeconds"] = float(b["cpuCoreSeconds"]) + cpu * seconds
-        b["memoryGiSeconds"] = float(b["memoryGiSeconds"]) + mem * seconds
+        if cpu is None or mem is None:
+            b["limitsMissing"] = int(b["limitsMissing"]) + 1
+        if cpu is not None:
+            b["cpuCoreSeconds"] = float(b["cpuCoreSeconds"]) + cpu * seconds
+        if mem is not None:
+            b["memoryGiSeconds"] = float(b["memoryGiSeconds"]) + mem * seconds
 
     cluster_totals = {
         "sandboxCount": 0,
         "overlapSeconds": 0.0,
         "cpuCoreSeconds": 0.0,
         "memoryGiSeconds": 0.0,
+        "limitsMissing": 0,
     }
     for b in by_tenant.values():
         cluster_totals["sandboxCount"] += int(b["sandboxCount"])
         cluster_totals["overlapSeconds"] += float(b["overlapSeconds"])
         cluster_totals["cpuCoreSeconds"] += float(b["cpuCoreSeconds"])
         cluster_totals["memoryGiSeconds"] += float(b["memoryGiSeconds"])
+        cluster_totals["limitsMissing"] += int(b["limitsMissing"])
 
     def _tenant_in_scope(tenant: str) -> bool:
         if viewer_tenant_only and tenant != viewer_tenant_only:
@@ -854,6 +1090,7 @@ def usage_allocation(
         "overlapSeconds": 0.0,
         "cpuCoreSeconds": 0.0,
         "memoryGiSeconds": 0.0,
+        "limitsMissing": 0,
     }
     for t, b in by_tenant.items():
         if not _tenant_in_scope(t):
@@ -862,6 +1099,7 @@ def usage_allocation(
         totals["overlapSeconds"] += float(b["overlapSeconds"])
         totals["cpuCoreSeconds"] += float(b["cpuCoreSeconds"])
         totals["memoryGiSeconds"] += float(b["memoryGiSeconds"])
+        totals["limitsMissing"] += int(b["limitsMissing"])
 
     def pct(part: float, whole: float) -> float:
         if whole <= 0:
@@ -910,7 +1148,8 @@ def usage_allocation(
         "coverageNote": (
             "沙箱数 = 与统计区间有生命周期交集的 history 条数（与占用时长同一批实例，非实时列表、非申请历史总条数）。"
             "占用时长 = 各沙箱「创建→结束」与区间的交集秒数之和（结束取 ended_at/deleted_at 或已终止 wall_clock，"
-            "不会把已销毁沙箱延续到当前时间）。统计 sandbox_lifecycle_history 单表（Server 审计 + Console 扩展）。"
+            "不会把已销毁沙箱延续到当前时间）。没有创建时 resourceLimits 的记录仍计入沙箱数和占用时长，"
+            "但不计入 CPU·秒和内存·Gi·秒（不会填 1 核 / 512Mi）。统计 sandbox_lifecycle_history 单表（Server 审计 + Console 扩展）。"
         ),
         "shareFormula": {
             "time": "时长占比 = 租户占用秒数 ÷ 区间全集群占用秒数 × 100%",
@@ -928,6 +1167,7 @@ def usage_allocation(
             "overlapSeconds": int(round(totals["overlapSeconds"])),
             "cpuCoreSeconds": round(totals["cpuCoreSeconds"], 2),
             "memoryGiSeconds": round(totals["memoryGiSeconds"], 2),
+            "limitsMissing": int(totals["limitsMissing"]),
         },
         "tenants": tenants_out,
     }
@@ -1006,6 +1246,7 @@ def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "lastSeenAt": iso(row["last_seen_at"]),
         "source": row["source"],
         "snapshotCount": row.get("snapshot_count", 0),
+        "metadata": _metadata_from_row(row),
         **_limits_payload(row),
     }
 

@@ -43,7 +43,6 @@ export function SandboxDetailPage() {
   const [renewHours, setRenewHours] = useState(1);
   const [endpointPort, setEndpointPort] = useState<number>(8080);
   const [endpointInfo, setEndpointInfo] = useState<Record<string, unknown> | null>(null);
-  const [actionLoading, setActionLoading] = useState(false);
 
   const api = useMemo(
     () =>
@@ -52,8 +51,6 @@ export function SandboxDetailPage() {
             get: () => adminApi.getSandbox(id, adminTenant),
             remove: () => adminApi.removeSandbox(id, adminTenant),
             renew: (expiresAt: string) => adminApi.renewSandbox(id, adminTenant, expiresAt),
-            pause: () => adminApi.pauseSandbox(id, adminTenant),
-            resume: () => adminApi.resumeSandbox(id, adminTenant),
             endpoint: (port: number) => adminApi.sandboxEndpoint(id, adminTenant, port),
           }
         : id
@@ -61,8 +58,6 @@ export function SandboxDetailPage() {
               get: () => sandboxApi.get(id),
               remove: () => sandboxApi.remove(id),
               renew: (expiresAt: string) => sandboxApi.renewExpiration(id, expiresAt),
-              pause: () => sandboxApi.pause(id),
-              resume: () => sandboxApi.resume(id),
               endpoint: (port: number) => sandboxApi.endpoint(id, port),
             }
           : null,
@@ -146,21 +141,6 @@ export function SandboxDetailPage() {
       await load();
     } catch (e) {
       message.error(e instanceof Error ? e.message : '续期失败');
-    }
-  };
-
-  const onPauseResume = async (action: 'pause' | 'resume') => {
-    if (!api) return;
-    setActionLoading(true);
-    try {
-      if (action === 'pause') await api.pause();
-      else await api.resume();
-      message.success(action === 'pause' ? '已请求暂停' : '已请求恢复');
-      await load();
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : '操作失败');
-    } finally {
-      setActionLoading(false);
     }
   };
 
@@ -313,20 +293,6 @@ export function SandboxDetailPage() {
                           <Button onClick={() => setRenewOpen(true)}>续期</Button>
                           <Button danger onClick={onDelete}>
                             删除
-                          </Button>
-                          <Button
-                            disabled={state !== 'Running'}
-                            loading={actionLoading}
-                            onClick={() => void onPauseResume('pause')}
-                          >
-                            暂停
-                          </Button>
-                          <Button
-                            disabled={state !== 'Paused'}
-                            loading={actionLoading}
-                            onClick={() => void onPauseResume('resume')}
-                          >
-                            恢复
                           </Button>
                           <Button onClick={() => void load()}>刷新</Button>
                           <Button

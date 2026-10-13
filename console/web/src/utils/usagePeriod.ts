@@ -67,6 +67,58 @@ export function monthRangeToUsageQuery(range: [Dayjs, Dayjs]) {
   return { from: toIsoUtcStart(range[0]), to: toIsoUtcEndExclusive(range[1]) };
 }
 
+/** Wide window for usage aggregation when the overview selects all history. */
+export function allTimeUsageRangeUtc(): [Dayjs, Dayjs] {
+  return [dayjs.utc('1970-01-01'), dayjs.utc().startOf('day')];
+}
+
+function inclusiveUtcDays(start: Dayjs, end: Dayjs): number {
+  return end.utc().startOf('day').diff(start.utc().startOf('day'), 'day') + 1;
+}
+
+/**
+ * Window immediately before `range` for overview deltas.
+ * An open this-month / this-quarter (end still in the future) is compared with the
+ * same number of elapsed UTC days in the previous period, not the whole previous period.
+ */
+export function previousComparisonRangeUtc(range: [Dayjs, Dayjs], now = dayjs.utc()): [Dayjs, Dayjs] {
+  const preset = matchUsagePeriodPreset(range);
+  const start = range[0].utc().startOf('day');
+  const nominalEnd = range[1].utc().startOf('day');
+  const today = now.utc().startOf('day');
+  const openEnded =
+    (preset === 'thisMonth' || preset === 'thisQuarter') && nominalEnd.isAfter(today);
+  if (openEnded) {
+    const effectiveEnd = today.isBefore(start) ? start : today;
+    const elapsed = inclusiveUtcDays(start, effectiveEnd);
+    const prevStart =
+      preset === 'thisMonth'
+        ? start.subtract(1, 'month').startOf('month')
+        : start.subtract(3, 'month').startOf('month');
+    return [prevStart, prevStart.add(elapsed - 1, 'day')];
+  }
+  if (preset === 'thisMonth' || preset === 'lastMonth') {
+    const prev = start.subtract(1, 'month').startOf('month');
+    return [prev.startOf('month'), prev.endOf('month')];
+  }
+  if (preset === 'thisQuarter' || preset === 'lastQuarter') {
+    const prev = start.subtract(3, 'month').startOf('month');
+    return [prev, prev.add(3, 'month').subtract(1, 'day')];
+  }
+  const days = inclusiveUtcDays(start, nominalEnd);
+  const prevEnd = start.subtract(1, 'day');
+  return [prevEnd.subtract(days - 1, 'day'), prevEnd];
+}
+
+/** Compact UTC day span for delta labels, e.g. `9/1–9/12`. */
+export function formatUtcDaySpan(range: [Dayjs, Dayjs]): string {
+  const start = range[0].utc();
+  const end = range[1].utc();
+  if (start.isSame(end, 'day')) return start.format('M/D');
+  if (start.isSame(end, 'year')) return `${start.format('M/D')}–${end.format('M/D')}`;
+  return `${start.format('YYYY/M/D')}–${end.format('YYYY/M/D')}`;
+}
+
 /** Parse usage-style period query back to inclusive UTC day range for DatePicker. */
 export function usageQueryToDayRange(from: string, to: string): [Dayjs, Dayjs] {
   const start = dayjs.utc(from);

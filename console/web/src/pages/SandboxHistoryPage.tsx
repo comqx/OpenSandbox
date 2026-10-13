@@ -20,6 +20,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import { historyApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
 import type { SandboxHistoryItem, SandboxHistoryStats } from '../api/types';
@@ -37,6 +38,7 @@ export function SandboxHistoryPage() {
   const periodTo = searchParams.get('to') ?? undefined;
   const periodActive = Boolean(periodFrom && periodTo);
   const urlTenant = searchParams.get('tenant');
+  const periodAll = searchParams.get('period') === 'all';
   const defaultedPeriod = useRef(false);
 
   const [loading, setLoading] = useState(false);
@@ -44,20 +46,20 @@ export function SandboxHistoryPage() {
   const [stats, setStats] = useState<SandboxHistoryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [labelQuery, setLabelQuery] = useState('');
   const [page, setPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
 
   useEffect(() => {
     if (defaultedPeriod.current) return;
     defaultedPeriod.current = true;
-    if (!periodFrom && !periodTo) {
-      const next = new URLSearchParams(searchParams);
-      const q = monthRangeToUsageQuery(currentMonthRangeUtc());
-      next.set('from', q.from);
-      next.set('to', q.to);
-      setSearchParams(next, { replace: true });
-    }
-  }, [periodFrom, periodTo, searchParams, setSearchParams]);
+    if (periodAll || periodFrom || periodTo) return;
+    const next = new URLSearchParams(searchParams);
+    const q = monthRangeToUsageQuery(currentMonthRangeUtc());
+    next.set('from', q.from);
+    next.set('to', q.to);
+    setSearchParams(next, { replace: true });
+  }, [periodAll, periodFrom, periodTo, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (isAdmin && urlTenant) {
@@ -67,7 +69,7 @@ export function SandboxHistoryPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [tenantFilter, periodFrom, periodTo]);
+  }, [tenantFilter, periodFrom, periodTo, labelQuery]);
 
   useEffect(() => {
     void (async () => {
@@ -82,9 +84,12 @@ export function SandboxHistoryPage() {
             page,
             pageSize: HISTORY_PAGE_SIZE,
             ...(tenant ? { tenant } : {}),
+            ...(labelQuery ? { label: labelQuery } : {}),
             ...periodQuery,
           }),
-          periodActive ? Promise.resolve({ enabled: true } as SandboxHistoryStats) : historyApi.stats(tenant),
+          periodActive
+            ? Promise.resolve({ enabled: true } as SandboxHistoryStats)
+            : historyApi.stats(tenant ? { tenant } : undefined),
         ]);
         setItems(list.items ?? []);
         setTotalItems(list.pagination?.totalItems ?? 0);
@@ -95,7 +100,7 @@ export function SandboxHistoryPage() {
         setLoading(false);
       }
     })();
-  }, [isAdmin, tenantFilter, page, periodFrom, periodTo, periodActive]);
+  }, [isAdmin, tenantFilter, page, periodFrom, periodTo, periodActive, labelQuery]);
 
   const dayRange = useMemo((): [Dayjs, Dayjs] | null => {
     if (!periodFrom || !periodTo) return null;
@@ -115,6 +120,7 @@ export function SandboxHistoryPage() {
   const applyDayRange = (range: [Dayjs, Dayjs]) => {
     const q = monthRangeToUsageQuery(range);
     const next = new URLSearchParams(searchParams);
+    next.delete('period');
     next.set('from', q.from);
     next.set('to', q.to);
     setSearchParams(next, { replace: true });
@@ -124,6 +130,7 @@ export function SandboxHistoryPage() {
     const next = new URLSearchParams(searchParams);
     next.delete('from');
     next.delete('to');
+    next.set('period', 'all');
     setSearchParams(next, { replace: true });
   };
 
@@ -149,6 +156,7 @@ export function SandboxHistoryPage() {
           },
         ]
       : []),
+    sandboxLabelsColumn<SandboxHistoryItem>({ filteredValue: labelQuery }),
     {
       title: '状态',
       dataIndex: 'state',
@@ -262,8 +270,19 @@ export function SandboxHistoryPage() {
           total: totalItems,
           hideOnSinglePage: false,
           showSizeChanger: false,
-          onChange: (p) => setPage(p),
           showTotal: (t) => `共 ${t} 条，每页 ${HISTORY_PAGE_SIZE} 条`,
+        }}
+        onChange={(pag, filters, _sorter, extra) => {
+          if (extra.action === 'filter') {
+            const raw = filters.labels;
+            const next = Array.isArray(raw) && raw[0] != null ? String(raw[0]).trim().slice(0, 200) : '';
+            setLabelQuery(next);
+            setPage(1);
+            return;
+          }
+          if (extra.action === 'paginate') {
+            setPage(pag.current ?? 1);
+          }
         }}
       />
     </div>

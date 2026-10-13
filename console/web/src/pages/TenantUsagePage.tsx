@@ -20,7 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs, { type Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { historyApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
@@ -31,18 +31,24 @@ import type { TenantUsageResponse, TenantUsageRow } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { formatDuration } from '../utils/format';
 import { historySandboxesPath } from '../utils/historyLinks';
-import { monthRangeToUsageQuery, presetThisMonth } from '../utils/usagePeriod';
+import { monthRangeToUsageQuery, presetThisMonth, usageQueryToDayRange } from '../utils/usagePeriod';
 
 dayjs.extend(utc);
 
 export function TenantUsagePage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [range, setRange] = useState<[Dayjs, Dayjs]>(() => presetThisMonth());
+  const [searchParams] = useSearchParams();
+  const [range, setRange] = useState<[Dayjs, Dayjs]>(() => {
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    if (from && to) return usageQueryToDayRange(from, to);
+    return presetThisMonth();
+  });
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<TenantUsageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [tenantFilter, setTenantFilter] = useState(() => searchParams.get('tenant') || ALL_TENANTS);
 
   const load = useCallback(
     async (r: [Dayjs, Dayjs]) => {

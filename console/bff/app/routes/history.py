@@ -76,6 +76,13 @@ async def list_sandbox_history(
                 detail={"code": "INVALID_PERIOD", "message": "to must be after from"},
             )
 
+    label = (request.query_params.get("label") or "").strip()
+    if len(label) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
+        )
+
     return await asyncio.to_thread(
         store.list_history,
         settings,
@@ -85,6 +92,7 @@ async def list_sandbox_history(
         include_active=include_active,
         period_from=period_from,
         period_to=period_to,
+        label=label or None,
     )
 
 
@@ -144,7 +152,26 @@ async def history_statistics(
         tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
         await reconcile.sync_with_lifecycle(settings, tenants=tenants)
 
-    return await asyncio.to_thread(store.history_stats, settings, tenant_name=tenant_filter)
+    period_from: datetime | None = None
+    period_to: datetime | None = None
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    if (raw_from and raw_from.strip()) or (raw_to and raw_to.strip()):
+        period_from = _parse_period_param(raw_from, "from")
+        period_to = _parse_period_param(raw_to, "to")
+        if period_from >= period_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+            )
+
+    return await asyncio.to_thread(
+        store.history_stats,
+        settings,
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+    )
 
 
 @router.get("/images/stats")

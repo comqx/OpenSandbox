@@ -32,24 +32,73 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Dayjs } from 'dayjs';
 import { Link } from 'react-router-dom';
 
 import { adminApi, ApiError, historyApi, sandboxApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
 import { USAGE_METRIC_HINTS, UsageMetricTitle } from '../components/UsageMetricTitle';
-import type { SandboxHistoryStats, TenantUsageRow } from '../api/types';
+import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
+import type { HistoryTenantStatsRow, SandboxHistoryStats, TenantUsageRow } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { formatDuration } from '../utils/format';
-import { historySandboxesPath } from '../utils/historyLinks';
+import { historySandboxesPath, historyUsagePath } from '../utils/historyLinks';
 import {
+  USAGE_PERIOD_PRESET_LABELS,
+  allTimeUsageRangeUtc,
   currentMonthRangeUtc,
+  formatUtcDaySpan,
+  matchUsagePeriodPreset,
   monthRangeToUsageQuery,
-  previousMonthRangeUtc,
+  previousComparisonRangeUtc,
+  type UsagePeriodPreset,
 } from '../utils/usagePeriod';
 
 import './OverviewPage.css';
+
+function usageSectionTitle(preset: UsagePeriodPreset): string {
+  switch (preset) {
+    case 'thisMonth':
+      return '本月用量（limits 口径）';
+    case 'lastMonth':
+      return '上月用量（limits 口径）';
+    case 'thisQuarter':
+      return '本季度用量（limits 口径）';
+    case 'lastQuarter':
+      return '上季度用量（limits 口径）';
+    case 'all':
+      return '历史用量（limits 口径）';
+    default:
+      return '区间用量（limits 口径）';
+  }
+}
+
+function usageTenantTitle(preset: UsagePeriodPreset): string {
+  switch (preset) {
+    case 'thisMonth':
+      return '本月租户用量统计';
+    case 'lastMonth':
+      return '上月租户用量统计';
+    case 'thisQuarter':
+      return '本季度租户用量统计';
+    case 'lastQuarter':
+      return '上季度租户用量统计';
+    case 'all':
+      return '历史租户用量统计';
+    default:
+      return '区间租户用量统计';
+  }
+}
+
+function periodSubtitle(range: [Dayjs, Dayjs] | null, preset: UsagePeriodPreset): string {
+  if (!range || preset === 'all') return '历史累计（UTC）';
+  if (preset === 'thisMonth' || preset === 'lastMonth') {
+    return `${USAGE_PERIOD_PRESET_LABELS[preset]} ${range[0].utc().format('YYYY-MM')}（UTC）`;
+  }
+  return `${USAGE_PERIOD_PRESET_LABELS[preset]} ${range[0].utc().format('YYYY-MM-DD')} – ${range[1].utc().format('YYYY-MM-DD')}（UTC）`;
+}
 
 function shareProgressColor(percent: number): string {
   if (percent >= 40) return '#1677ff';
@@ -68,6 +117,7 @@ type UsageTotals = {
   overlapSeconds?: number;
   cpuCoreSeconds?: number;
   memoryGiSeconds?: number;
+  limitsMissing?: number;
 };
 
 function pctChange(current: number, previous: number | undefined): number | null {
@@ -79,56 +129,54 @@ function pctChange(current: number, previous: number | undefined): number | null
   return ((current - previous) / previous) * 100;
 }
 
-function DeltaTag({ current, previous }: { current: number; previous?: number }) {
+function DeltaTag({
+  current,
+  previous,
+  basis,
+}: {
+  current: number;
+  previous?: number;
+  basis?: string;
+}) {
   const pct = pctChange(current, previous);
+  const basisNode = basis ? <span className="overview-kpi-delta-basis">{basis}</span> : null;
   if (pct === null) {
-    return previous === 0 && current > 0 ? (
-      <span className="overview-kpi-delta up">↑ 新</span>
-    ) : null;
+    if (previous === 0 && current > 0) {
+      return (
+        <span className="overview-kpi-delta up">
+          ↑ 新
+          {basisNode}
+        </span>
+      );
+    }
+    return null;
   }
   if (Math.abs(pct) < 0.05) {
-    return <span className="overview-kpi-delta flat">— 0%</span>;
+    return (
+      <span className="overview-kpi-delta flat">
+        — 0%{basisNode}
+      </span>
+    );
   }
   const up = pct > 0;
   return (
     <span className={`overview-kpi-delta ${up ? 'up' : 'down'}`}>
-      {up ? '↑' : '↓'} {Math.abs(pct).toFixed(0)}%
+      {up ? '↑' : '↓'} {Math.abs(pct).toFixed(0)}%{basisNode}
     </span>
-  );
-}
-
-function MiniSparkline({ seed }: { seed: number }) {
-  const points = useMemo(() => {
-    const w = 88;
-    const h = 32;
-    const coords: string[] = [];
-    let v = (seed % 97) + 3;
-    for (let i = 0; i < 8; i++) {
-      v = (v * 17 + seed + i * 11) % 24;
-      const y = h - 6 - v;
-      coords.push(`${(i / 7) * w},${y}`);
-    }
-    return coords.join(' ');
-  }, [seed]);
-
-  return (
-    <svg className="overview-kpi-spark" width={88} height={32} viewBox="0 0 88 32" aria-hidden>
-      <polyline fill="none" stroke="#1677ff" strokeWidth="2" strokeLinecap="round" points={points} />
-    </svg>
   );
 }
 
 function UsageKpiCard(props: {
   icon: React.ReactNode;
   iconTone: 'blue' | 'purple' | 'cyan' | 'orange';
-  title: string;
+  title: React.ReactNode;
   displayValue: string;
   numericCurrent: number;
   numericPrevious?: number;
-  sparkSeed: number;
+  deltaBasis?: string;
   detailTo?: string;
 }) {
-  const { icon, iconTone, title, displayValue, numericCurrent, numericPrevious, sparkSeed, detailTo } =
+  const { icon, iconTone, title, displayValue, numericCurrent, numericPrevious, deltaBasis, detailTo } =
     props;
   const valueNode =
     detailTo && numericCurrent > 0 ? (
@@ -142,11 +190,10 @@ function UsageKpiCard(props: {
     <Card className="overview-kpi-card" bordered={false}>
       <div className="overview-kpi-top">
         <div className={`overview-kpi-icon ${iconTone}`}>{icon}</div>
-        <DeltaTag current={numericCurrent} previous={numericPrevious} />
+        <DeltaTag current={numericCurrent} previous={numericPrevious} basis={deltaBasis} />
       </div>
       <div className="overview-kpi-title">{title}</div>
       <div className="overview-kpi-value">{valueNode}</div>
-      <MiniSparkline seed={sparkSeed} />
     </Card>
   );
 }
@@ -155,10 +202,12 @@ function LiveRuntimePanel({
   total,
   running,
   isAdmin,
+  listHref,
 }: {
   total: number;
   running: number;
   isAdmin: boolean;
+  listHref: string;
 }) {
   return (
     <Card className="overview-live-card" bordered={false}>
@@ -173,8 +222,8 @@ function LiveRuntimePanel({
             </Typography.Text>
           </div>
           <div className="overview-live-stat-value overview-live-stat-value--blue">{total}</div>
-          <Typography.Text type="secondary" className="overview-live-stat-foot">
-            当前 API 分页列表（最多 200 条）
+            <Typography.Text type="secondary" className="overview-live-stat-foot">
+            每个租户最新 200 条
           </Typography.Text>
         </div>
         <div className="overview-live-stat-divider" aria-hidden />
@@ -204,17 +253,16 @@ function LiveRuntimePanel({
             {running}
           </div>
           <Typography.Text type="secondary" className="overview-live-stat-foot">
-            状态为 Running 的沙箱
+            以上列表中的 Running
           </Typography.Text>
         </div>
       </div>
       <div className="overview-live-hint">
         <Typography.Text type="secondary">
-          数据来源：Lifecycle 实时接口，与下方 PostgreSQL 历史统计独立。
-          {isAdmin ? ' Admin 可按页面顶部租户筛选缩小范围。' : ''}
-          {total > 0 && running === 0 ? ' 当前无运行中实例。' : null}
+          不受顶部时间范围影响。数据来自 Lifecycle 实时接口，与下方历史统计独立。
+          {isAdmin ? ' 可按租户缩小范围。' : ''}
         </Typography.Text>
-        <Link to={isAdmin ? '/admin/sandboxes' : '/sandboxes'} className="overview-live-hint-link">
+        <Link to={listHref} className="overview-live-hint-link">
           打开实时列表 →
         </Link>
       </div>
@@ -226,6 +274,7 @@ export function OverviewPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [range, setRange] = useState<[Dayjs, Dayjs] | null>(() => currentMonthRangeUtc());
   const [loading, setLoading] = useState(true);
   const [historyOff, setHistoryOff] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -236,86 +285,110 @@ export function OverviewPage() {
   const [live, setLive] = useState<LiveCounts | null>(null);
 
   const tenantQuery = isAdmin ? tenantFilterToQuery(tenantFilter) : undefined;
+  const liveSeq = useRef(0);
+  const historySeq = useRef(0);
 
   useEffect(() => {
+    const seq = ++liveSeq.current;
     void (async () => {
-      setLoading(true);
-      setError(null);
-      setHistoryOff(false);
-      setStats(null);
-      setMonthTenants([]);
-      setMonthTotals(null);
-      setPrevMonthTotals(null);
-      setLive(null);
-
-      const monthRange = currentMonthRangeUtc();
-      const usageQuery = monthRangeToUsageQuery(monthRange);
-      const prevUsageQuery = monthRangeToUsageQuery(previousMonthRangeUtc());
-
       try {
-        const livePromise = isAdmin
-          ? adminApi.sandboxes({ pageSize: 200, tenant: tenantQuery }).then((data) => {
-              const items = data.items ?? [];
-              return {
-                total: items.length,
-                running: items.filter((s) => s.status?.state === 'Running').length,
-              };
-            })
-          : sandboxApi.list({ pageSize: 200 }).then((data) => {
-              const items = data.items ?? [];
-              return {
-                total: items.length,
-                running: items.filter((s) => s.status?.state === 'Running').length,
-              };
-            });
-
-        const historyBlock = (async () => {
-          try {
-            const tenantArg = tenantQuery ? { tenant: tenantQuery } : {};
-            const [st, usage, prevUsage] = await Promise.all([
-              historyApi.stats(tenantQuery),
-              historyApi.usage({ ...usageQuery, ...tenantArg }),
-              historyApi.usage({ ...prevUsageQuery, ...tenantArg }),
-            ]);
-            if (st.enabled === false) {
-              setHistoryOff(true);
-              return;
-            }
-            setStats(st);
-            setMonthTotals(usage.totals ?? null);
-            setPrevMonthTotals(prevUsage.totals ?? null);
-            setMonthTenants(usage.tenants ?? []);
-          } catch (e) {
-            if (e instanceof ApiError && e.status === 503) {
-              setHistoryOff(true);
-              return;
-            }
-            throw e;
-          }
-        })();
-
-        const [liveCounts] = await Promise.all([livePromise, historyBlock]);
-        setLive(liveCounts);
+        const data = isAdmin
+          ? await adminApi.sandboxes({ pageSize: 200, tenant: tenantQuery })
+          : await sandboxApi.list({ pageSize: 200 });
+        if (seq !== liveSeq.current) return;
+        const items = data.items ?? [];
+        setLive({
+          total: items.length,
+          running: items.filter((s) => s.status?.state === 'Running').length,
+        });
       } catch (e) {
-        setError(e instanceof Error ? e.message : '加载概览失败');
-      } finally {
-        setLoading(false);
+        if (seq !== liveSeq.current) return;
+        setError(e instanceof Error ? e.message : '加载实时沙箱失败');
       }
     })();
-  }, [isAdmin, tenantFilter, tenantQuery]);
+  }, [isAdmin, tenantQuery]);
 
-  const monthLabel = useMemo(() => {
-    const [start] = currentMonthRangeUtc();
-    return start.format('YYYY-MM');
-  }, []);
+  useEffect(() => {
+    const seq = ++historySeq.current;
+    setLoading(true);
+    setError(null);
+    const usageQuery = monthRangeToUsageQuery(range ?? allTimeUsageRangeUtc());
+    const prevUsageQuery = range ? monthRangeToUsageQuery(previousComparisonRangeUtc(range)) : null;
+    const tenantArg = tenantQuery ? { tenant: tenantQuery } : {};
+    void (async () => {
+      try {
+        const [st, usage, prevUsage] = await Promise.all([
+          historyApi.stats({ ...usageQuery, ...tenantArg }),
+          historyApi.usage({ ...usageQuery, ...tenantArg }),
+          prevUsageQuery
+            ? historyApi.usage({ ...prevUsageQuery, ...tenantArg })
+            : Promise.resolve(null),
+        ]);
+        if (seq !== historySeq.current) return;
+        if (st.enabled === false) {
+          setHistoryOff(true);
+          return;
+        }
+        setHistoryOff(false);
+        setStats(st);
+        setMonthTotals(usage.totals ?? null);
+        setPrevMonthTotals(prevUsage?.totals ?? null);
+        setMonthTenants(usage.tenants ?? []);
+      } catch (e) {
+        if (seq !== historySeq.current) return;
+        if (e instanceof ApiError && e.status === 503) {
+          setHistoryOff(true);
+          return;
+        }
+        setError(e instanceof Error ? e.message : '加载概览失败');
+      } finally {
+        if (seq === historySeq.current) setLoading(false);
+      }
+    })();
+  }, [range, tenantQuery]);
 
-  const monthUsagePeriod = useMemo(() => monthRangeToUsageQuery(currentMonthRangeUtc()), [monthLabel]);
+  const periodPreset = useMemo(() => matchUsagePeriodPreset(range, { allowAll: true }), [range]);
 
-  const historyEmpty =
+  const usageQuery = useMemo(
+    () => monthRangeToUsageQuery(range ?? allTimeUsageRangeUtc()),
+    [range],
+  );
+
+  const usagePeriod = useMemo(() => (range ? usageQuery : null), [range, usageQuery]);
+
+  const comparisonBasis = useMemo(() => {
+    if (!range) return undefined;
+    return `较 ${formatUtcDaySpan(previousComparisonRangeUtc(range))}`;
+  }, [range]);
+
+  const historyLink = useMemo(
+    () =>
+      historySandboxesPath(
+        range
+          ? { from: usagePeriod?.from, to: usagePeriod?.to, tenant: tenantQuery }
+          : { allTime: true, tenant: tenantQuery },
+      ),
+    [range, tenantQuery, usagePeriod?.from, usagePeriod?.to],
+  );
+
+  const usageLink = useMemo(
+    () => historyUsagePath({ from: usageQuery.from, to: usageQuery.to, tenant: tenantQuery }),
+    [tenantQuery, usageQuery.from, usageQuery.to],
+  );
+
+  const liveListHref = isAdmin
+    ? tenantQuery
+      ? `/admin/sandboxes?tenant=${encodeURIComponent(tenantQuery)}`
+      : '/admin/sandboxes'
+    : '/sandboxes';
+
+  const countsAreEmpty =
     !historyOff &&
     stats &&
     (stats.totalRecords ?? 0) === 0 &&
     (monthTotals?.sandboxCount ?? 0) === 0;
+  const historyEmpty = Boolean(countsAreEmpty && !range);
+  const periodEmpty = Boolean(countsAreEmpty && range);
 
   const tenantColumns: ColumnsType<TenantUsageRow> = useMemo(
     () => [
@@ -329,18 +402,18 @@ export function OverviewPage() {
       },
       {
         title: (
-          <UsageMetricTitle label="本月沙箱数" hint={USAGE_METRIC_HINTS.sandboxCount} />
+          <UsageMetricTitle label="沙箱数" hint={USAGE_METRIC_HINTS.sandboxCount} />
         ),
         dataIndex: 'sandboxCount',
         width: 120,
         render: (v: number, row) =>
           v > 0 ? (
             <Link
-              to={historySandboxesPath({
-                from: monthUsagePeriod.from,
-                to: monthUsagePeriod.to,
-                tenant: row.tenant,
-              })}
+              to={historySandboxesPath(
+                range
+                  ? { from: usagePeriod?.from, to: usagePeriod?.to, tenant: row.tenant }
+                  : { allTime: true, tenant: row.tenant },
+              )}
             >
               <Typography.Text strong className="overview-tenant-metric overview-tenant-metric--count">
                 {v}
@@ -400,20 +473,66 @@ export function OverviewPage() {
         },
       },
     ],
-    [monthUsagePeriod.from, monthUsagePeriod.to],
+    [range, usagePeriod?.from, usagePeriod?.to],
+  );
+
+  const historyTenantColumns: ColumnsType<HistoryTenantStatsRow> = useMemo(
+    () => [
+      {
+        title: '租户',
+        dataIndex: 'tenant',
+        width: 140,
+        render: (t: string) => <TenantTag tenant={t} className="overview-tenant-tag" />,
+      },
+      {
+        title: range ? '重叠记录数' : '历史记录数',
+        dataIndex: 'totalRecords',
+        width: 120,
+        render: (v: number) => (
+          <Typography.Text strong className="overview-tenant-metric overview-tenant-metric--count">
+            {v}
+          </Typography.Text>
+        ),
+      },
+      {
+        title: '进行中',
+        dataIndex: 'activeRecords',
+        width: 100,
+        render: (v: number) => (
+          <span className="overview-tenant-metric overview-tenant-metric--active">{v}</span>
+        ),
+      },
+      {
+        title: range ? '区间内时长' : '累计运行时长',
+        dataIndex: 'totalWallClockSeconds',
+        render: (v: number) => (
+          <span className="overview-tenant-metric overview-tenant-metric--time">{formatDuration(v)}</span>
+        ),
+      },
+      {
+        title: range ? '区间内平均时长' : '平均运行时长',
+        dataIndex: 'avgWallClockSeconds',
+        render: (v: number, row) => (
+          <span className="overview-tenant-metric overview-tenant-metric--time">
+            {row.totalRecords > 0 ? formatDuration(v) : '—'}
+          </span>
+        ),
+      },
+    ],
+    [range],
   );
 
   const quickLinks: { to: string; label: string }[] = isAdmin
     ? [
-        { to: '/admin/sandboxes', label: '全局沙箱（实时）' },
-        { to: '/history/sandboxes', label: '申请历史' },
-        { to: '/history/usage', label: '用量分摊' },
+        { to: liveListHref, label: '全局沙箱（实时）' },
+        { to: historyLink, label: '申请历史' },
+        { to: usageLink, label: '用量分摊' },
         { to: '/platform/health', label: '组件健康' },
       ]
     : [
         { to: '/sandboxes', label: '我的沙箱（实时）' },
-        { to: '/history/sandboxes', label: '申请历史' },
-        { to: '/history/usage', label: '用量分摊' },
+        { to: historyLink, label: '申请历史' },
+        { to: usageLink, label: '用量分摊' },
         { to: '/sandboxes/new', label: '创建沙箱' },
       ];
 
@@ -424,16 +543,24 @@ export function OverviewPage() {
 
   return (
     <div className="overview-page">
-      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} align="start">
+      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} align="start" wrap>
         <div>
           <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 6, fontWeight: 600 }}>
             概览
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 14 }}>
-            {isAdmin ? '平台视角' : `租户 ${user?.tenant ?? ''}`} · 本月 {monthLabel}（UTC）
+            {isAdmin ? '平台视角' : `租户 ${user?.tenant ?? ''}`} · {periodSubtitle(range, periodPreset)}
           </Typography.Text>
         </div>
-        {isAdmin && <AdminTenantSelect value={tenantFilter} onChange={setTenantFilter} width={220} />}
+        <Space wrap>
+          <UsagePeriodFilterBar
+            range={range}
+            onRangeChange={setRange}
+            allowAllTime
+            allTimeLabel="历史累计"
+          />
+          {isAdmin && <AdminTenantSelect value={tenantFilter} onChange={setTenantFilter} width={220} />}
+        </Space>
       </Space>
 
       <nav className="overview-quick-nav" aria-label="快捷入口">
@@ -465,65 +592,71 @@ export function OverviewPage() {
           total={live?.total ?? 0}
           running={live?.running ?? 0}
           isAdmin={isAdmin}
+          listHref={liveListHref}
         />
 
         {!historyOff && (
           <>
+            <div className="overview-block">
             <div className="overview-section-head">
               <Typography.Title level={5} className="overview-section-title" style={{ marginBottom: 0 }}>
-                本月用量（limits 口径）
+                {usageSectionTitle(periodPreset)}
               </Typography.Title>
-              <Link to="/history/usage">详细分摊 →</Link>
+              <Link to={usageLink}>详细分摊 →</Link>
             </div>
+            <div className="overview-subsection">
+            {isAdmin && !tenantQuery && monthTenants.length > 0 ? (
+              <div className="overview-subsection-label">指标</div>
+            ) : null}
             <div className="overview-kpi-grid">
               <UsageKpiCard
                 icon={<CloudServerOutlined />}
                 iconTone="blue"
-                title="沙箱数"
+                title={<UsageMetricTitle label="沙箱数" hint={USAGE_METRIC_HINTS.sandboxCount} />}
                 displayValue={String(sandboxCount)}
                 numericCurrent={sandboxCount}
                 numericPrevious={prevMonthTotals?.sandboxCount}
-                sparkSeed={sandboxCount + 1}
-                detailTo={historySandboxesPath({
-                  from: monthUsagePeriod.from,
-                  to: monthUsagePeriod.to,
-                  tenant: tenantQuery,
-                })}
+                deltaBasis={comparisonBasis}
+                detailTo={historyLink}
               />
               <UsageKpiCard
                 icon={<ClockCircleOutlined />}
                 iconTone="purple"
-                title="占用时长"
+                title={<UsageMetricTitle label="占用时长" hint={USAGE_METRIC_HINTS.overlapSeconds} />}
                 displayValue={formatDuration(overlapSec)}
                 numericCurrent={overlapSec}
                 numericPrevious={prevMonthTotals?.overlapSeconds}
-                sparkSeed={overlapSec + 2}
+                deltaBasis={comparisonBasis}
               />
               <UsageKpiCard
                 icon={<ThunderboltOutlined />}
                 iconTone="cyan"
-                title="CPU·秒"
+                title={<UsageMetricTitle label="CPU·秒" hint={USAGE_METRIC_HINTS.cpuCoreSeconds} />}
                 displayValue={cpuSec.toLocaleString(undefined, { maximumFractionDigits: 1 })}
                 numericCurrent={cpuSec}
                 numericPrevious={prevMonthTotals?.cpuCoreSeconds}
-                sparkSeed={Math.floor(cpuSec) + 3}
+                deltaBasis={comparisonBasis}
               />
               <UsageKpiCard
                 icon={<DatabaseOutlined />}
                 iconTone="orange"
-                title="内存·Gi·秒"
+                title={<UsageMetricTitle label="内存·Gi·秒" hint={USAGE_METRIC_HINTS.memoryGiSeconds} />}
                 displayValue={memGiSec.toLocaleString(undefined, { maximumFractionDigits: 1 })}
                 numericCurrent={memGiSec}
                 numericPrevious={prevMonthTotals?.memoryGiSeconds}
-                sparkSeed={Math.floor(memGiSec) + 4}
+                deltaBasis={comparisonBasis}
               />
+            </div>
+            {(monthTotals?.limitsMissing ?? 0) > 0 ? (
+              <Typography.Paragraph type="secondary" className="overview-limits-note">
+                {monthTotals?.limitsMissing} 条记录没有创建时的 resourceLimits，未计入 CPU·秒和内存·Gi·秒。
+              </Typography.Paragraph>
+            ) : null}
             </div>
 
             {isAdmin && !tenantQuery && monthTenants.length > 0 && (
-              <>
-                <Typography.Title level={5} className="overview-section-title">
-                  租户用量统计
-                </Typography.Title>
+              <div className="overview-subsection">
+                <div className="overview-subsection-label">{usageTenantTitle(periodPreset)}</div>
                 <Card className="overview-tenant-card" bordered={false}>
                   <Table
                     className="overview-tenant-table"
@@ -537,35 +670,70 @@ export function OverviewPage() {
                     }
                   />
                 </Card>
-              </>
+              </div>
             )}
+            </div>
 
+            <div className="overview-block">
             <Typography.Title level={5} className="overview-section-title">
-              历史累计（Console 入库以来）
+              {range ? '区间记录' : '历史累计'}
             </Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
+              {range
+                ? '与所选区间有重叠的记录。时长只计落在区间内的部分。进行中仍指当前未结束。'
+                : '全部历史里与时间轴有重叠的记录。时长含仍在运行的沙箱。'}
+            </Typography.Paragraph>
+            <div className="overview-subsection">
+            {isAdmin && !tenantQuery && (stats?.tenants?.length ?? 0) > 0 ? (
+              <div className="overview-subsection-label">指标</div>
+            ) : null}
             <div className="overview-history-grid">
               <Card className="overview-history-card" bordered={false}>
-                <Statistic title="历史记录总数" value={stats?.totalRecords ?? 0} />
+                <Statistic title={range ? '重叠记录数' : '历史记录总数'} value={stats?.totalRecords ?? 0} />
               </Card>
               <Card className="overview-history-card" bordered={false}>
                 <Statistic title="进行中（未结束）" value={stats?.activeRecords ?? 0} />
               </Card>
               <Card className="overview-history-card" bordered={false}>
                 <Statistic
-                  title="累计运行时长"
+                  title={range ? '区间内时长' : '累计运行时长'}
                   value={formatDuration(stats?.totalWallClockSeconds ?? 0)}
                 />
               </Card>
               <Card className="overview-history-card" bordered={false}>
                 <Statistic
-                  title="平均运行时长"
+                  title={range ? '区间内平均时长' : '平均运行时长'}
                   value={
                     (stats?.totalRecords ?? 0) > 0 ? formatDuration(stats?.avgWallClockSeconds) : '—'
                   }
                 />
               </Card>
             </div>
+            </div>
+            {isAdmin && !tenantQuery && (stats?.tenants?.length ?? 0) > 0 && (
+              <div className="overview-subsection">
+                <div className="overview-subsection-label">{range ? '各租户区间记录' : '各租户总计'}</div>
+                <Card className="overview-tenant-card" bordered={false}>
+                  <Table
+                    className="overview-tenant-table"
+                    size="middle"
+                    rowKey="tenant"
+                    pagination={false}
+                    columns={historyTenantColumns}
+                    dataSource={stats?.tenants}
+                    rowClassName={(_, index) =>
+                      index % 2 === 0 ? 'overview-tenant-row-even' : 'overview-tenant-row-odd'
+                    }
+                  />
+                </Card>
+              </div>
+            )}
+            </div>
           </>
+        )}
+
+        {periodEmpty && (
+          <Typography.Paragraph type="secondary">该区间没有重叠的历史记录。</Typography.Paragraph>
         )}
 
         {historyEmpty && (
