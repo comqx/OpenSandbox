@@ -26,7 +26,7 @@ Core lifecycle flows go through the **BFF**; optional **server lifecycle audit**
 | Tenant overview KPI | ✅ | list aggregation | `/` |
 | Sandbox image list | ✅ | `/api/images/catalog` | `/images/list` |
 | Mirror accel URLs | ✅ | static UI | `/history/mirror-accel` |
-| Sandbox image build | 📋 | remote build TBD | `/images/sandbox-build` |
+| Sandbox image build | 🟡 Phase 1 | browser context editor + tar.gz download; remote build TBD | `/images/sandbox-build` |
 
 ## Phase 2 — admin and platform
 
