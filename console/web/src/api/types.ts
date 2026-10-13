@@ -326,6 +326,47 @@ export interface SandboxMonitorPod {
   phase?: string;
 }
 
+export interface BuildContextManifestFile {
+  encoding: 'utf-8' | 'base64';
+  size: number;
+  sha256?: string;
+  ossKey?: string;
+}
+
+export interface BuildContextManifest {
+  version: number;
+  dockerfile: string;
+  files: Record<string, BuildContextManifestFile>;
+}
+
+export interface BuildContextItem {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  status: string;
+  manifest: BuildContextManifest;
+  dockerfilePath: string;
+  tarOssKey?: string | null;
+  tarSha256?: string | null;
+  tarSizeBytes?: number | null;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BuildContextListResponse {
+  persisted: boolean;
+  source: string;
+  items: BuildContextItem[];
+}
+
+export interface BuildContextFileResponse {
+  path: string;
+  encoding: 'utf-8' | 'base64';
+  content: string;
+}
+
 export interface SandboxMonitorResponse {
   enabled?: boolean;
   message?: string;

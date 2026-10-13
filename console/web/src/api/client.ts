@@ -23,6 +23,9 @@ import type {
   SandboxImageCatalogInput,
   SandboxImageCatalogItem,
   SandboxImageCatalogResponse,
+  BuildContextItem,
+  BuildContextListResponse,
+  BuildContextFileResponse,
   SandboxMonitorResponse,
   PoolListResponse,
   PoolItem,
@@ -305,6 +308,61 @@ export const poolApi = {
     }),
   remove: (name: string) =>
     apiRequest<void>(`/api/pools/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+};
+
+function tenantQueryParam(tenant?: string): string {
+  if (!tenant) {
+    return '';
+  }
+  return `?tenant=${encodeURIComponent(tenant)}`;
+}
+
+export const buildContextApi = {
+  list: (tenant?: string) =>
+    apiRequest<BuildContextListResponse>(`/api/images/build-contexts${tenantQueryParam(tenant)}`),
+  create: (body: { displayName: string; dockerfilePath?: string }, tenant?: string) =>
+    apiRequest<BuildContextItem>(`/api/images/build-contexts${tenantQueryParam(tenant)}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  get: (id: string, tenant?: string) =>
+    apiRequest<BuildContextItem>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
+    ),
+  patch: (
+    id: string,
+    body: { displayName?: string; dockerfilePath?: string },
+    tenant?: string,
+  ) =>
+    apiRequest<BuildContextItem>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+  putFile: (
+    id: string,
+    path: string,
+    body: { encoding: 'utf-8' | 'base64'; content: string },
+    tenant?: string,
+  ) =>
+    apiRequest<{ path: string; sha256: string; size: number }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/files/${path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}${tenantQueryParam(tenant)}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
+  getFile: (id: string, path: string, tenant?: string) =>
+    apiRequest<BuildContextFileResponse>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/files/${path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}${tenantQueryParam(tenant)}`,
+    ),
+  buildTar: (id: string, tenant?: string) =>
+    apiRequest<{ tarSha256: string; tarSizeBytes: number; downloadUrl: string }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/tar${tenantQueryParam(tenant)}`,
+      { method: 'POST' },
+    ),
 };
 
 export const imageCatalogApi = {
