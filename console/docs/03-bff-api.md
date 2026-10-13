@@ -124,6 +124,20 @@ Shared directory of base images. Any signed-in tenant or admin can list and edit
 
 `scenarios`, `systemPackages`, and `runtimePackages` are string lists. A comma-separated string is accepted and split. `maintainer` defaults to the admin role or the tenant name. Duplicate `imageUri` returns 409. Writes return 503 when neither the history database nor `BFF_IMAGE_CATALOG_PATH` is configured.
 
+## Sandbox image build context (Phase 2a)
+
+Requires `BFF_HISTORY_ENABLED`, `BFF_IMAGE_BUILD_ENABLED=true`, and OSS credentials (`BFF_IMAGE_BUILD_OSS_*` or fallback `BFF_NODEAGENT_OSS_*`). Admin calls must include `?tenant=`.
+
+| Method | Path | Notes |
+|--------|------|--------|
+| GET | `/api/images/build-contexts` | `{ persisted, source, items }` |
+| POST | `/api/images/build-contexts` | `displayName`, optional `dockerfilePath` |
+| GET/PATCH | `/api/images/build-contexts/{id}` | metadata + manifest (no inline file bodies) |
+| PUT/GET/DELETE | `/api/images/build-contexts/{id}/files/{path}` | `encoding` + `content` (utf-8 or base64) |
+| POST/GET | `/api/images/build-contexts/{id}/tar` | build or presign `context.tar.gz` on OSS |
+
+Returns `503 IMAGE_BUILD_NOT_CONFIGURED` when the feature gate or storage is unavailable.
+
 ## Health
 
 - `GET /health` → `{ "status": "ok" }`

@@ -43,6 +43,18 @@ In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.exa
 | `BFF_HISTORY_RECONCILE_ON_READ` | `false` | When `true`, history API reads scan Lifecycle before responding. Leave `false`; the poller does the scan |
 | `BFF_HISTORY_RECONCILE_INTERVAL_SECONDS` | `600` | How often the BFF reconciles every tenant. `0` disables the poller. A past `expires_at` is the close time |
 
+### Optional: sandbox image build context (PostgreSQL + OSS)
+
+Requires `BFF_HISTORY_ENABLED` (table `console_sandbox_build_context`). Set `BFF_IMAGE_BUILD_ENABLED=true` and OSS credentials. Empty `BFF_IMAGE_BUILD_OSS_*` falls back to `BFF_NODEAGENT_OSS_*` with prefix `BFF_IMAGE_BUILD_OSS_KEY_PREFIX` (default `console/image-build`). See [03-bff-api.md](./03-bff-api.md#sandbox-image-build-context-phase-2a).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BFF_IMAGE_BUILD_ENABLED` | `false` | `/api/images/build-contexts/*` |
+| `BFF_IMAGE_BUILD_MAX_FILES` | `256` | Per-context file count |
+| `BFF_IMAGE_BUILD_MAX_FILE_BYTES` | `5242880` | Single file cap |
+| `BFF_IMAGE_BUILD_MAX_TOTAL_BYTES` | `52428800` | Total uncompressed cap |
+| `BFF_IMAGE_BUILD_OSS_*` | empty | Dedicated bucket/prefix (recommended) |
+
 ### Optional: Grafana sandbox monitor
 
 | Variable | Default | Description |
