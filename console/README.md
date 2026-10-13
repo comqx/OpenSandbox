@@ -15,6 +15,7 @@ Long-form docs for the published site: [Developer Console guide](../docs/guides/
 | [docs/05-feature-matrix.md](./docs/05-feature-matrix.md) | Implemented vs optional features |
 | [docs/06-build-and-deploy.md](./docs/06-build-and-deploy.md) | Images (linux/amd64) and Kubernetes |
 | [docs/07-sandbox-history.md](./docs/07-sandbox-history.md) | PostgreSQL `sandbox_lifecycle_history` |
+| [docs/PR-STACK-extended-scope.md](./docs/PR-STACK-extended-scope.md) | Splitting extended-scope work into upstream PRs |
 | [bff/](./bff/) | FastAPI BFF |
 | [web/](./web/) | Vite + React + Ant Design |
 | [k8s/](./k8s/) | Example manifests (adjust for your cluster) |
