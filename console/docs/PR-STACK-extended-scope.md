@@ -49,6 +49,9 @@ Commits on `feat/console-extended-scope` (oldest first). **Clean** = single PR; 
 | `5e8eb375` | Grafana proxy + history poll | **E3 + E1** | Cross-cutting; acceptable as E3 if E1 merged |
 | `1aa6ce07` | labels, create UX, audit metadata | **E6 + E2** | **Mixed** — split server metadata vs console |
 | `095a7e84`, `5cb1527e` | image catalog + YAML editor | **E7** | Clean (console) |
+| `19e2ed58` | image build OSS/PG spec | **E8** | Docs-only (implementation follows) |
+| `87884f79` | dependency accelerator nav label | **E3** | UI copy only |
+| `1a042506` | this split guide + script | — | Meta; not a product PR |
 
 ### Fixing mixed commits (before opening PRs)
 
