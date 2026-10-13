@@ -19,42 +19,62 @@ import { tags } from '@lezer/highlight';
 import CodeMirror from '@uiw/react-codemirror';
 
 const yamlHighlight = HighlightStyle.define([
-  { tag: tags.comment, color: '#8c8c8c', fontStyle: 'italic' },
-  { tag: tags.propertyName, color: '#1677ff', fontWeight: '600' },
-  { tag: tags.keyword, color: '#1677ff' },
-  { tag: tags.string, color: '#237804' },
-  { tag: tags.content, color: '#237804' },
-  { tag: tags.number, color: '#d46b08' },
-  { tag: tags.bool, color: '#cf1322' },
-  { tag: tags.null, color: '#cf1322' },
-  { tag: tags.separator, color: '#595959' },
+  { tag: tags.comment, color: '#6a9955', fontStyle: 'italic' },
+  { tag: tags.propertyName, color: '#4ec9b0', fontWeight: '600' },
+  { tag: tags.keyword, color: '#4ec9b0' },
+  { tag: tags.string, color: '#ce9178' },
+  { tag: tags.content, color: '#d4d4d4' },
+  { tag: tags.number, color: '#b5cea8' },
+  { tag: tags.bool, color: '#569cd6' },
+  { tag: tags.null, color: '#569cd6' },
+  { tag: tags.separator, color: '#808080' },
 ]);
 
-const editorChrome = EditorView.theme({
-  '&': {
-    border: '1px solid #d9d9d9',
-    borderRadius: '8px',
-    fontSize: '13px',
+const editorChrome = EditorView.theme(
+  {
+    '&': {
+      backgroundColor: '#1e1e1e',
+      color: '#d4d4d4',
+      border: '1px solid #3c3c3c',
+      borderRadius: '8px',
+      fontSize: '13px',
+    },
+    '&.cm-focused': {
+      outline: 'none',
+      borderColor: '#3c3c3c',
+      boxShadow: 'none',
+    },
+    '.cm-scroller': {
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      lineHeight: '1.6',
+    },
+    '.cm-content': {
+      caretColor: '#d4d4d4',
+    },
+    '.cm-cursor, .cm-dropCursor': {
+      borderLeftColor: '#d4d4d4',
+    },
+    '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+      {
+        backgroundColor: '#264f78',
+      },
+    '.cm-gutters': {
+      backgroundColor: '#1e1e1e',
+      color: '#858585',
+      border: 'none',
+      borderRight: '1px solid #2d2d2d',
+      borderRadius: '8px 0 0 8px',
+    },
+    '.cm-activeLine': {
+      backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: 'rgba(255, 255, 255, 0.04)',
+      color: '#c6c6c6',
+    },
   },
-  '&.cm-focused': {
-    outline: 'none',
-    borderColor: '#1677ff',
-    boxShadow: '0 0 0 2px rgba(22, 119, 255, 0.12)',
-  },
-  '.cm-scroller': {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    lineHeight: '1.6',
-  },
-  '.cm-gutters': {
-    backgroundColor: '#fafafa',
-    color: '#8c8c8c',
-    border: 'none',
-    borderRadius: '8px 0 0 8px',
-  },
-  '.cm-activeLine': {
-    backgroundColor: 'rgba(22, 119, 255, 0.06)',
-  },
-});
+  { dark: true },
+);
 
 const extensions = [yaml(), syntaxHighlighting(yamlHighlight), editorChrome];
 
@@ -69,7 +89,7 @@ export function YamlCodeEditor({
     <CodeMirror
       value={value}
       height="440px"
-      theme="light"
+      theme="none"
       extensions={extensions}
       basicSetup={{
         lineNumbers: true,

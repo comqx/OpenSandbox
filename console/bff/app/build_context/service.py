@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import base64
-import gzip
 import io
 import tarfile
 import uuid
@@ -65,6 +64,22 @@ def _empty_manifest(dockerfile_path: str) -> dict[str, Any]:
     return {"version": 1, "dockerfile": dockerfile_path, "files": {}}
 
 
+def _normalize_build_version(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        raise BuildContextError("VERSION_REQUIRED", "buildVersion is required")
+    if len(text) > 64:
+        raise BuildContextError("VERSION_TOO_LONG", "buildVersion must be at most 64 characters")
+    return text
+
+
+def _normalize_remark(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if len(text) > 512:
+        raise BuildContextError("REMARK_TOO_LONG", "remark must be at most 512 characters")
+    return text
+
+
 def _decode_file_body(body: dict[str, Any]) -> tuple[str, bytes]:
     encoding = str(body.get("encoding") or "utf-8").strip()
     if encoding not in ("utf-8", "base64"):
@@ -104,6 +119,10 @@ def create_context(settings: Settings, tenant_id: str, body: dict[str, Any], act
     dockerfile_path = normalize_relative_path(dockerfile_raw) or "Dockerfile"
     context_id = str(uuid.uuid4())
     manifest = _empty_manifest(dockerfile_path)
+    if "buildVersion" in body:
+        manifest["buildVersion"] = _normalize_build_version(body.get("buildVersion"))
+    if "remark" in body:
+        manifest["remark"] = _normalize_remark(body.get("remark"))
     return build_store.insert_context(
         {
             "id": context_id,
@@ -146,16 +165,24 @@ def patch_context(
         if normalized_dockerfile is None:
             raise BuildContextError("INVALID_DOCKERFILE_PATH", "dockerfilePath is invalid")
 
-    manifest = existing["manifest"]
+    manifest = dict(existing["manifest"])
+    manifest_dirty = False
     if normalized_dockerfile:
-        manifest = {**manifest, "dockerfile": normalized_dockerfile}
+        manifest["dockerfile"] = normalized_dockerfile
+        manifest_dirty = True
+    if "buildVersion" in body:
+        manifest["buildVersion"] = _normalize_build_version(body.get("buildVersion"))
+        manifest_dirty = True
+    if "remark" in body:
+        manifest["remark"] = _normalize_remark(body.get("remark"))
+        manifest_dirty = True
 
     updated = build_store.update_context(
         tenant_id,
         context_id,
         display_name=str(display_name).strip()[:120] if display_name is not None else None,
         dockerfile_path=normalized_dockerfile,
-        manifest=manifest if normalized_dockerfile else None,
+        manifest=manifest if manifest_dirty else None,
         updated_by=actor,
         clear_tar=bool(normalized_dockerfile),
     )
@@ -306,13 +333,12 @@ def build_and_store_tar(
             tar.addfile(info, io.BytesIO(data))
 
     tar_bytes = buffer.getvalue()
-    gz_bytes = gzip.compress(tar_bytes)
-    digest = sha256_hex(gz_bytes)
+    digest = sha256_hex(tar_bytes)
     key = tar_object_key(oss.prefix, tenant_id, context_id)
     oss.put_bytes(
         key,
-        gz_bytes,
-        content_type="application/gzip",
+        tar_bytes,
+        content_type="application/x-tar",
         sha256_hex=digest,
         tenant_id=tenant_id,
     )
@@ -322,14 +348,14 @@ def build_and_store_tar(
         status="ready",
         tar_oss_key=key,
         tar_sha256=digest,
-        tar_size_bytes=len(gz_bytes),
+        tar_size_bytes=len(tar_bytes),
         updated_by=actor,
     )
     if updated is None:
         raise BuildContextError("NOT_FOUND", "Build context not found", 404)
     return {
         "tarSha256": digest,
-        "tarSizeBytes": len(gz_bytes),
+        "tarSizeBytes": len(tar_bytes),
         "downloadUrl": oss.sign_get_url(key),
     }
 

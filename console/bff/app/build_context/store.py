@@ -42,6 +42,8 @@ def _row_api(row: dict[str, Any]) -> dict[str, Any]:
         "id": row["id"],
         "tenantId": row["tenant_id"],
         "displayName": row["display_name"],
+        "buildVersion": str(manifest.get("buildVersion") or ""),
+        "remark": str(manifest.get("remark") or ""),
         "status": row["status"],
         "manifest": manifest,
         "dockerfilePath": row.get("dockerfile_path") or "Dockerfile",

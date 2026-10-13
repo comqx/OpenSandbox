@@ -134,7 +134,7 @@ Requires `BFF_HISTORY_ENABLED`, `BFF_IMAGE_BUILD_ENABLED=true`, and OSS credenti
 | POST | `/api/images/build-contexts` | `displayName`, optional `dockerfilePath` |
 | GET/PATCH | `/api/images/build-contexts/{id}` | metadata + manifest (no inline file bodies) |
 | PUT/GET/DELETE | `/api/images/build-contexts/{id}/files/{path}` | `encoding` + `content` (utf-8 or base64) |
-| POST/GET | `/api/images/build-contexts/{id}/tar` | build or presign `context.tar.gz` on OSS |
+| POST/GET | `/api/images/build-contexts/{id}/tar` | build or presign `context.tar` on OSS |
 | DELETE | `/api/images/build-contexts/{id}` | remove draft row and OSS objects |
 
 Returns `503 IMAGE_BUILD_NOT_CONFIGURED` when the feature gate or storage is unavailable.

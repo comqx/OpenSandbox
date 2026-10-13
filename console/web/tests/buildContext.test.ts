@@ -13,18 +13,51 @@
 // limitations under the License.
 
 import assert from 'node:assert/strict';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { execSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  buildContextDirectoryPlaceholder,
   buildContextManifest,
   bytesToContextFile,
   contextFilesToByteMap,
   createDefaultContextFiles,
   normalizeRelativePath,
+  buildMovedRelativePath,
+  resolveMoveTargetPath,
+  resolveUploadRelativePath,
+  stripLeadingPathSegment,
   validateBuildContext,
 } from '../src/utils/buildContextModel.ts';
-import { packBuildContextTar, packBuildContextTarGzSync } from '../src/utils/buildContextTar.ts';
+import { packBuildContextTar } from '../src/utils/buildContextTar.ts';
+
+test('buildContextDirectoryPlaceholder creates gitkeep path', () => {
+  assert.equal(buildContextDirectoryPlaceholder('certs'), 'certs/.gitkeep');
+  assert.equal(buildContextDirectoryPlaceholder('ssl/certs/'), 'ssl/certs/.gitkeep');
+});
+
+test('move path helpers resolve directory and drop targets', () => {
+  assert.equal(buildMovedRelativePath('a.csr', 'dir:__context_root__'), 'a.csr');
+  assert.equal(buildMovedRelativePath('a.csr', 'dir:certs'), 'certs/a.csr');
+  assert.equal(resolveMoveTargetPath('a.csr', 'certs/'), 'certs/a.csr');
+  assert.equal(resolveMoveTargetPath('a.csr', 'certs/a.csr'), 'certs/a.csr');
+});
+
+test('resolveUploadRelativePath preserves folder structure for directory uploads', () => {
+  assert.equal(
+    resolveUploadRelativePath('my-context/Dockerfile', 'Dockerfile', 'directory'),
+    'my-context/Dockerfile',
+  );
+  assert.equal(
+    resolveUploadRelativePath('my-context/certs/a.csr', 'a.csr', 'directory'),
+    'my-context/certs/a.csr',
+  );
+  assert.equal(resolveUploadRelativePath(undefined, 'single.txt', 'file'), 'single.txt');
+  assert.equal(stripLeadingPathSegment('pkg/a.csr'), 'a.csr');
+});
 
 test('normalizeRelativePath rejects traversal and absolute paths', () => {
   assert.equal(normalizeRelativePath('Dockerfile'), 'Dockerfile');
@@ -50,7 +83,7 @@ test('manifest lists file sizes and dockerfile pointer', () => {
   assert.ok(manifest.files.Dockerfile);
 });
 
-test('tar contains Dockerfile payload and gzip round-trips', () => {
+test('tar contains Dockerfile payload and is readable by system tar', () => {
   const files = contextFilesToByteMap(createDefaultContextFiles());
   const tar = packBuildContextTar(files, 1_700_000_000);
   const nameBytes = tar.slice(0, 100);
@@ -62,11 +95,10 @@ test('tar contains Dockerfile payload and gzip round-trips', () => {
   const payload = tar.slice(512, 512 + size);
   assert.match(new TextDecoder().decode(payload), /FROM python:3.12-slim/);
 
-  const gz = packBuildContextTarGzSync(files, (input) => gzipSync(input), 1_700_000_000);
-  assert.equal(gz[0], 0x1f);
-  assert.equal(gz[1], 0x8b);
-  const ungz = gunzipSync(gz);
-  assert.equal(ungz.byteLength, tar.byteLength);
+  const path = join(tmpdir(), `opensandbox-context-${Date.now()}.tar`);
+  writeFileSync(path, tar);
+  const listing = execSync(`tar tf ${path}`, { encoding: 'utf8' });
+  assert.match(listing, /^Dockerfile\n$/m);
 });
 
 test('bytesToContextFile preserves binary as base64', () => {

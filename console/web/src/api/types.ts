@@ -336,6 +336,8 @@ export interface BuildContextManifestFile {
 export interface BuildContextManifest {
   version: number;
   dockerfile: string;
+  buildVersion?: string;
+  remark?: string;
   files: Record<string, BuildContextManifestFile>;
 }
 
@@ -343,6 +345,8 @@ export interface BuildContextItem {
   id: string;
   tenantId: string;
   displayName: string;
+  buildVersion?: string;
+  remark?: string;
   status: string;
   manifest: BuildContextManifest;
   dockerfilePath: string;

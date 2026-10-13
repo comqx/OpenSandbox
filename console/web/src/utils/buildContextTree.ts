@@ -14,6 +14,8 @@
 
 import type { DataNode } from 'antd/es/tree';
 
+import { buildMovedRelativePath, normalizeRelativePath } from './buildContextModel.ts';
+
 export function buildContextTreeData(paths: string[]): DataNode[] {
   const root: DataNode[] = [];
   const dirIndex = new Map<string, DataNode>();
@@ -44,4 +46,59 @@ export function buildContextTreeData(paths: string[]): DataNode[] {
     });
   }
   return root;
+}
+
+/** Wrap flat root files under a single visible root (IDE-style context root). */
+/** Unique directory paths implied by file paths (does not include build-context root). */
+export type TreeDropHint = {
+  dropKey: string;
+  dropToGap: boolean;
+  dropPosition: number;
+};
+
+/** Map a tree drag/drop gesture to a new file path (build-context relative). */
+export function resolveTreeDropMove(fromPath: string, hint: TreeDropHint): string | null {
+  const { dropKey, dropToGap } = hint;
+  if (dropKey.startsWith('dir:')) {
+    return buildMovedRelativePath(fromPath, dropKey);
+  }
+  if (dropToGap) {
+    const fileName = fromPath.split('/').pop() ?? '';
+    if (!fileName) {
+      return null;
+    }
+    const parent = dropKey.includes('/') ? dropKey.slice(0, dropKey.lastIndexOf('/')) : '';
+    return normalizeRelativePath(parent ? `${parent}/${fileName}` : fileName);
+  }
+  return null;
+}
+
+export function listBuildContextDirectoryKeys(paths: string[]): string[] {
+  const dirs = listBuildContextDirectories(paths);
+  return ['dir:__context_root__', ...dirs.map((dir) => `dir:${dir}`)];
+}
+
+export function listBuildContextDirectories(paths: string[]): string[] {
+  const dirs = new Set<string>();
+  for (const path of paths) {
+    const parts = path.split('/');
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      dirs.add(parts.slice(0, depth).join('/'));
+    }
+  }
+  return [...dirs].sort((a, b) => a.localeCompare(b));
+}
+
+export function wrapBuildContextTreeRoot(nodes: DataNode[]): DataNode[] {
+  if (nodes.length === 0) {
+    return [];
+  }
+  return [
+    {
+      key: 'dir:__context_root__',
+      title: 'build-context',
+      selectable: false,
+      children: nodes,
+    },
+  ];
 }

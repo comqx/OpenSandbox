@@ -14,43 +14,58 @@
 
 const BLOCK = 512;
 
-function padOctal(value: number, width: number): string {
+function writeOctalField(header: Uint8Array, offset: number, width: number, value: number) {
   const text = value.toString(8);
   if (text.length > width - 1) {
     throw new Error(`octal field overflow: ${value}`);
   }
-  return text.padStart(width - 1, '0') + '\0';
+  const start = offset + width - 1 - text.length;
+  header.fill(0x30, offset, start);
+  for (let i = 0; i < text.length; i += 1) {
+    header[start + i] = text.charCodeAt(i)!;
+  }
+  header[offset + width - 1] = 0;
+}
+
+function writeNameField(header: Uint8Array, offset: number, width: number, name: string) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(name);
+  if (bytes.length >= width) {
+    throw new Error(`tar path too long: ${name}`);
+  }
+  header.set(bytes, offset);
+}
+
+function writeChecksum(header: Uint8Array) {
+  header.fill(0x20, 148, 156);
+  let sum = 0;
+  for (let i = 0; i < BLOCK; i += 1) {
+    sum += header[i]!;
+  }
+  const text = sum.toString(8);
+  for (let i = 0; i < text.length; i += 1) {
+    header[148 + i] = text.charCodeAt(i)!;
+  }
+  header[148 + text.length] = 0;
+  header.fill(0x20, 148 + text.length + 1, 156);
 }
 
 function writeHeader(name: string, size: number, mtime: number): Uint8Array {
-  if (name.length > 100) {
-    throw new Error(`tar path too long: ${name}`);
-  }
   const header = new Uint8Array(BLOCK);
-  const view = new DataView(header.buffer);
   const encoder = new TextEncoder();
 
-  const writeString = (offset: number, length: number, text: string) => {
-    const bytes = encoder.encode(text);
-    header.set(bytes.slice(0, length - 1), offset);
-  };
+  writeNameField(header, 0, 100, name);
+  writeOctalField(header, 100, 8, 0o644);
+  writeOctalField(header, 108, 8, 0);
+  writeOctalField(header, 116, 8, 0);
+  writeOctalField(header, 124, 12, size);
+  writeOctalField(header, 136, 12, mtime);
+  header[156] = 0x30; // '0' regular file
+  header.set(encoder.encode('ustar'), 257);
+  header[257 + 5] = 0;
+  header.set(encoder.encode('00'), 263);
 
-  writeString(0, 100, name);
-  writeString(100, 8, padOctal(0o644, 8));
-  writeString(108, 8, padOctal(0, 8));
-  writeString(116, 8, padOctal(0, 8));
-  writeString(124, 12, padOctal(size, 12));
-  writeString(136, 12, padOctal(mtime, 12));
-  writeString(148, 8, '        ');
-  view.setUint8(156, 0x30); // '0' regular file
-  writeString(257, 6, 'ustar\0');
-  writeString(263, 2, '00');
-
-  let checksum = 0;
-  for (let i = 0; i < BLOCK; i += 1) {
-    checksum += header[i]!;
-  }
-  writeString(148, 8, padOctal(checksum, 8));
+  writeChecksum(header);
   return header;
 }
 
@@ -66,7 +81,10 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 }
 
 /** Build a POSIX ustar tar archive (uncompressed). */
-export function packBuildContextTar(files: Map<string, Uint8Array>, mtimeSec = 1_700_000_000): Uint8Array {
+export function packBuildContextTar(
+  files: Map<string, Uint8Array>,
+  mtimeSec = Math.floor(Date.now() / 1000),
+): Uint8Array {
   const sortedPaths = [...files.keys()].sort();
   const chunks: Uint8Array[] = [];
 
@@ -85,31 +103,4 @@ export function packBuildContextTar(files: Map<string, Uint8Array>, mtimeSec = 1
 
   chunks.push(new Uint8Array(BLOCK * 2));
   return concatChunks(chunks);
-}
-
-async function gzipBytes(input: Uint8Array): Promise<Uint8Array> {
-  if (typeof CompressionStream !== 'undefined') {
-    const stream = new Blob([input]).stream().pipeThrough(new CompressionStream('gzip'));
-    const buffer = await new Response(stream).arrayBuffer();
-    return new Uint8Array(buffer);
-  }
-  throw new Error('CompressionStream is not available in this environment');
-}
-
-/** Gzip tar suitable for docker build context upload (Phase 1 browser download). */
-export async function packBuildContextTarGz(
-  files: Map<string, Uint8Array>,
-  mtimeSec?: number,
-): Promise<Uint8Array> {
-  const tar = packBuildContextTar(files, mtimeSec);
-  return gzipBytes(tar);
-}
-
-export function packBuildContextTarGzSync(
-  files: Map<string, Uint8Array>,
-  gzipFn: (input: Uint8Array) => Uint8Array,
-  mtimeSec?: number,
-): Uint8Array {
-  const tar = packBuildContextTar(files, mtimeSec);
-  return gzipFn(tar);
 }

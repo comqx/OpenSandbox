@@ -320,7 +320,15 @@ function tenantQueryParam(tenant?: string): string {
 export const buildContextApi = {
   list: (tenant?: string) =>
     apiRequest<BuildContextListResponse>(`/api/images/build-contexts${tenantQueryParam(tenant)}`),
-  create: (body: { displayName: string; dockerfilePath?: string }, tenant?: string) =>
+  create: (
+    body: {
+      displayName: string;
+      dockerfilePath?: string;
+      buildVersion?: string;
+      remark?: string;
+    },
+    tenant?: string,
+  ) =>
     apiRequest<BuildContextItem>(`/api/images/build-contexts${tenantQueryParam(tenant)}`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -331,7 +339,12 @@ export const buildContextApi = {
     ),
   patch: (
     id: string,
-    body: { displayName?: string; dockerfilePath?: string },
+    body: {
+      displayName?: string;
+      dockerfilePath?: string;
+      buildVersion?: string;
+      remark?: string;
+    },
     tenant?: string,
   ) =>
     apiRequest<BuildContextItem>(

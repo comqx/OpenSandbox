@@ -266,7 +266,7 @@ export function SandboxImageListPage() {
         width={760}
       >
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          字段已经写好。只改冒号后面的值，灰色斜体的备注可以保留。
+          字段已经写好。只改冒号后面的值，绿色斜体的备注可以保留。
         </Typography.Paragraph>
         {yamlError && (
           <Alert type="error" showIcon style={{ marginBottom: 12 }} message={yamlError} />

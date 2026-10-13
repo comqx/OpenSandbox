@@ -14,7 +14,14 @@
 
 import pytest
 
-from app.build_context.service import BuildContextError, _decode_file_body, feature_meta, is_enabled
+from app.build_context.service import (
+    BuildContextError,
+    _decode_file_body,
+    _normalize_build_version,
+    _normalize_remark,
+    feature_meta,
+    is_enabled,
+)
 from app.config import Settings
 
 
@@ -48,6 +55,24 @@ def test_decode_utf8_and_base64():
     enc2, data2 = _decode_file_body({"encoding": "base64", "content": "aGVsbG8="})
     assert enc2 == "base64"
     assert data2 == b"hello"
+
+
+def test_normalize_remark():
+    assert _normalize_remark("  hello  ") == "hello"
+    assert _normalize_remark("") == ""
+    with pytest.raises(BuildContextError) as exc:
+        _normalize_remark("x" * 513)
+    assert exc.value.code == "REMARK_TOO_LONG"
+
+
+def test_normalize_build_version():
+    assert _normalize_build_version(" 1.2.3 ") == "1.2.3"
+    with pytest.raises(BuildContextError) as exc:
+        _normalize_build_version("  ")
+    assert exc.value.code == "VERSION_REQUIRED"
+    with pytest.raises(BuildContextError) as exc2:
+        _normalize_build_version("x" * 65)
+    assert exc2.value.code == "VERSION_TOO_LONG"
 
 
 def test_decode_rejects_invalid_base64():

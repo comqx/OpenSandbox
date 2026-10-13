@@ -48,7 +48,7 @@ def file_object_key(
 
 
 def tar_object_key(prefix: str, tenant_id: str, context_id: str) -> str:
-    return f"{prefix}/v1/tenant/{tenant_id}/context/{context_id}/context.tar.gz"
+    return f"{prefix}/v1/tenant/{tenant_id}/context/{context_id}/context.tar"
 
 
 class BuildContextOss:

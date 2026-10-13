@@ -22,6 +22,18 @@ export const BUILD_CONTEXT_LIMITS = {
 
 export const DEFAULT_DOCKERFILE_PATH = 'Dockerfile';
 
+/** Placeholder file so empty directories appear in the path tree and tar archive. */
+export const BUILD_CONTEXT_DIR_PLACEHOLDER = '.gitkeep';
+
+export function buildContextDirectoryPlaceholder(dirInput: string): string | null {
+  const trimmed = dirInput.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const dir = normalizeRelativePath(trimmed);
+  if (!dir) {
+    return null;
+  }
+  return normalizeRelativePath(`${dir}/${BUILD_CONTEXT_DIR_PLACEHOLDER}`);
+}
+
 export const DEFAULT_DOCKERFILE = `# Sandbox base image — edit before download or remote build (Phase 2).
 FROM python:3.12-slim
 
@@ -75,6 +87,57 @@ export function normalizeRelativePath(raw: string): string | null {
     return null;
   }
   return normalized.join('/');
+}
+
+/** Drop the top-level folder segment from directory-picker paths (e.g. `ctx/Dockerfile` → `Dockerfile`). */
+export function stripLeadingPathSegment(relativePath: string): string | null {
+  const slash = relativePath.indexOf('/');
+  if (slash === -1) {
+    return relativePath;
+  }
+  return normalizeRelativePath(relativePath.slice(slash + 1));
+}
+
+/** Target is a directory when it ends with `/`, otherwise a full file path. */
+export function resolveMoveTargetPath(fromPath: string, targetInput: string): string | null {
+  const trimmed = targetInput.trim().replace(/\\/g, '/');
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.endsWith('/')) {
+    const fileName = fromPath.split('/').pop() ?? '';
+    if (!fileName) {
+      return null;
+    }
+    return normalizeRelativePath(`${trimmed}${fileName}`);
+  }
+  return normalizeRelativePath(trimmed);
+}
+
+/** Drop a file onto a tree directory node (`dir:…` key). */
+export function buildMovedRelativePath(fromPath: string, dropDirKey: string): string | null {
+  if (!dropDirKey.startsWith('dir:')) {
+    return null;
+  }
+  const fileName = fromPath.split('/').pop() ?? '';
+  if (!fileName) {
+    return null;
+  }
+  const dir = dropDirKey.slice('dir:'.length);
+  if (dir === '__context_root__') {
+    return normalizeRelativePath(fileName);
+  }
+  return normalizeRelativePath(`${dir}/${fileName}`);
+}
+
+/** Keep `webkitRelativePath` as-is so folder uploads preserve directory structure under build-context. */
+export function resolveUploadRelativePath(
+  webkitRelativePath: string | undefined,
+  fileName: string,
+  _mode: 'file' | 'directory',
+): string | null {
+  const raw = (webkitRelativePath || fileName).trim();
+  return normalizeRelativePath(raw);
 }
 
 export function contextFileBytes(file: ContextFile): Uint8Array {
