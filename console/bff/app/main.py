@@ -23,8 +23,9 @@ from app.config import get_settings
 from app.history import reconcile
 from app.lifecycle import LifecycleClient
 from app.history.store import close_history_pool, init_history_pool
+from app.image_catalog import init_image_catalog
 from app.platform_settings import init_platform_settings
-from app.routes import admin, auth, history, platform, pools, sandboxes, shell, snapshots
+from app.routes import admin, auth, history, images, platform, pools, sandboxes, shell, snapshots
 
 app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
 _history_poll_task: asyncio.Task[None] | None = None
@@ -40,6 +41,7 @@ async def validate_config() -> None:
         raise RuntimeError("BFF_SESSION_SECRET and BFF_ADMIN_TOKEN are required")
     init_history_pool(settings)
     init_platform_settings(settings)
+    init_image_catalog(settings)
     _history_poll_task = asyncio.create_task(reconcile.poll_forever(settings))
 
 
@@ -84,6 +86,7 @@ api.include_router(snapshots.router)
 api.include_router(pools.router)
 api.include_router(admin.router)
 api.include_router(history.router)
+api.include_router(images.router)
 api.include_router(platform.router)
 api.include_router(platform.admin_router)
 app.mount("/api", api)

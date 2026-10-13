@@ -30,9 +30,10 @@ import {
 } from 'antd';
 import type { CollapseProps } from 'antd';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
-import { sandboxApi } from '../api/client';
+import { imageCatalogApi, sandboxApi } from '../api/client';
+import type { SandboxImageCatalogItem } from '../api/types';
 import {
   buildSandboxCreateBody,
   type SandboxCreateFormValues,
@@ -300,8 +301,11 @@ function VolumeEditor({ index, onRemove }: { index: number; onRemove: () => void
 
 export function SandboxCreatePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const presetImage = searchParams.get('image')?.trim();
   const [form] = Form.useForm<SandboxCreateFormValues>();
   const [submitting, setSubmitting] = useState(false);
+  const [catalog, setCatalog] = useState<SandboxImageCatalogItem[]>([]);
   const source = (Form.useWatch('source', form) ?? 'image') as SourceKind;
   const timeoutEnabled = Form.useWatch('timeoutEnabled', form);
   const requestsEnabled = Form.useWatch('requestsEnabled', form);
@@ -315,6 +319,13 @@ export function SandboxCreatePage() {
       form.setFieldValue('timeoutEnabled', true);
     }
   }, [form, source, timeoutEnabled]);
+
+  useEffect(() => {
+    void imageCatalogApi
+      .list()
+      .then((data) => setCatalog(data.items ?? []))
+      .catch(() => setCatalog([]));
+  }, []);
 
   const showRuntimeShape = source !== 'template';
   const showWorkload = source === 'image' || source === 'snapshot';
@@ -597,7 +608,7 @@ export function SandboxCreatePage() {
         scrollToFirstError
         initialValues={{
           source: 'image',
-          imageUri: 'hub.glodon.com/glodon-pub/opensandbox-code-interpreter:v1.1.1-slim',
+          imageUri: presetImage || 'hub.glodon.com/glodon-pub/opensandbox-code-interpreter:v1.1.1-slim',
           entrypoint: [{ value: 'tail' }, { value: '-f' }, { value: '/dev/null' }],
           timeoutEnabled: true,
           timeout: 3600,
@@ -620,6 +631,23 @@ export function SandboxCreatePage() {
           <Alert type="info" showIcon message={SOURCE_HINT[source]} />
           {allows(source, ['image', 'pool']) && (
             <>
+              {catalog.length > 0 && (
+                <Form.Item label="从镜像目录选择" style={{ marginTop: 16 }} extra="选中后填入镜像 URI，仍可手工修改。">
+                  <Select
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="选择已录入的沙箱镜像"
+                    options={catalog.map((item) => ({
+                      value: item.imageUri,
+                      label: `${item.displayName} · ${item.imageUri}`,
+                    }))}
+                    onChange={(uri) => {
+                      if (typeof uri === 'string' && uri) form.setFieldValue('imageUri', uri);
+                    }}
+                  />
+                </Form.Item>
+              )}
               <Form.Item
                 name="imageUri"
                 label="镜像 URI"

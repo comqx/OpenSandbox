@@ -24,7 +24,7 @@ Core lifecycle flows go through the **BFF**; optional **server lifecycle audit**
 | Runtime / TTL summary | ✅ | `runtimeSummary` | list / detail |
 | Pause / resume | 🔶 | pause / resume | detail |
 | Tenant overview KPI | ✅ | list aggregation | `/` |
-| Sandbox image list | 📋 | catalog TBD | `/images/list` (demo) |
+| Sandbox image list | ✅ | `/api/images/catalog` | `/images/list` |
 | Mirror accel URLs | ✅ | static UI | `/history/mirror-accel` |
 | Sandbox image build | 📋 | remote build TBD | `/images/sandbox-build` |
 

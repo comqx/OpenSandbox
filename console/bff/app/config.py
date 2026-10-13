@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     bff_grafana_auth_proxy_user_header: str = "X-WEBAUTH-USER"
     # Optional JSON file when history DB is disabled (Admin PATCH persistence)
     bff_platform_settings_path: str = ""
+    # Optional JSON file for the sandbox image catalog when history DB is disabled
+    bff_image_catalog_path: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

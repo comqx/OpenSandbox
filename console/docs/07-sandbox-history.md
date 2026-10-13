@@ -30,7 +30,7 @@ enabled = true
 | `BFF_HISTORY_RECONCILE_ON_READ` | default `false`. History reads do not scan Lifecycle |
 | `BFF_HISTORY_RECONCILE_INTERVAL_SECONDS` | default `600`. Poll interval; `0` disables it |
 
-BFF runs `CREATE TABLE IF NOT EXISTS sandbox_lifecycle_history` only (no import from legacy `console_sandbox_history` tables).
+BFF runs `CREATE TABLE IF NOT EXISTS` for `sandbox_lifecycle_history`, `console_platform_settings`, and `console_sandbox_image_catalog` (no import from legacy `console_sandbox_history` tables). The image catalog is the shared list on **沙箱镜像列表**; any signed-in user can read and edit it. It is not derived from sandbox history.
 
 ## Reads
 
@@ -48,4 +48,4 @@ See [03-bff-api.md](./03-bff-api.md) and `/api/history/*`.
 
 ## Database permissions
 
-Role needs `SELECT, INSERT, UPDATE` on `sandbox_lifecycle_history`; snapshot counts may need `SELECT` on `snapshots`.
+Role needs `SELECT, INSERT, UPDATE` on `sandbox_lifecycle_history`; snapshot counts may need `SELECT` on `snapshots`. The image catalog table is created by the BFF, so the same role needs `SELECT, INSERT, UPDATE, DELETE` on `console_sandbox_image_catalog`.

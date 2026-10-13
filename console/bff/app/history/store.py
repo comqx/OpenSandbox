@@ -138,6 +138,29 @@ def _ensure_schema(pool: ConnectionPool) -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS console_sandbox_image_catalog (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                image_uri TEXT NOT NULL,
+                scenarios JSONB NOT NULL DEFAULT '[]'::jsonb,
+                system_packages JSONB NOT NULL DEFAULT '[]'::jsonb,
+                runtime_packages JSONB NOT NULL DEFAULT '[]'::jsonb,
+                maintainer TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL DEFAULT '',
+                updated_by TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_console_sandbox_image_catalog_uri
+                ON console_sandbox_image_catalog (image_uri)
+            """
+        )
 
 
 def history_pool_available() -> bool:
@@ -179,6 +202,127 @@ def save_platform_settings_to_db(overrides: dict[str, Any]) -> None:
             """,
             (json.dumps(overrides),),
         )
+
+
+def _json_list(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw]
+
+
+def _iso_timestamp(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if value is None:
+        return None
+    return str(value)
+
+
+def _image_catalog_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "displayName": row["display_name"],
+        "imageUri": row["image_uri"],
+        "scenarios": _json_list(row.get("scenarios")),
+        "systemPackages": _json_list(row.get("system_packages")),
+        "runtimePackages": _json_list(row.get("runtime_packages")),
+        "maintainer": row.get("maintainer") or "",
+        "createdBy": row.get("created_by") or "",
+        "updatedBy": row.get("updated_by") or "",
+        "createdAt": _iso_timestamp(row.get("created_at")),
+        "updatedAt": _iso_timestamp(row.get("updated_at")),
+    }
+
+
+def list_sandbox_images() -> list[dict[str, Any]]:
+    if _pool is None:
+        return []
+    with _pool.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM console_sandbox_image_catalog
+            ORDER BY updated_at DESC, display_name ASC
+            """
+        ).fetchall()
+    return [_image_catalog_api(row) for row in rows]
+
+
+def insert_sandbox_image(row: dict[str, Any]) -> dict[str, Any]:
+    if _pool is None:
+        raise RuntimeError("History pool not initialized")
+    with _pool.connection() as conn:
+        saved = conn.execute(
+            """
+            INSERT INTO console_sandbox_image_catalog (
+                id, display_name, image_uri, scenarios, system_packages, runtime_packages,
+                maintainer, created_by, updated_by
+            )
+            VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                row["id"],
+                row["displayName"],
+                row["imageUri"],
+                json.dumps(row["scenarios"]),
+                json.dumps(row["systemPackages"]),
+                json.dumps(row["runtimePackages"]),
+                row["maintainer"],
+                row["createdBy"],
+                row["updatedBy"],
+            ),
+        ).fetchone()
+    return _image_catalog_api(saved)
+
+
+def update_sandbox_image(image_id: str, row: dict[str, Any]) -> dict[str, Any] | None:
+    if _pool is None:
+        raise RuntimeError("History pool not initialized")
+    with _pool.connection() as conn:
+        saved = conn.execute(
+            """
+            UPDATE console_sandbox_image_catalog
+            SET display_name = %s,
+                image_uri = %s,
+                scenarios = %s::jsonb,
+                system_packages = %s::jsonb,
+                runtime_packages = %s::jsonb,
+                maintainer = %s,
+                updated_by = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                row["displayName"],
+                row["imageUri"],
+                json.dumps(row["scenarios"]),
+                json.dumps(row["systemPackages"]),
+                json.dumps(row["runtimePackages"]),
+                row["maintainer"],
+                row["updatedBy"],
+                image_id,
+            ),
+        ).fetchone()
+    if saved is None:
+        return None
+    return _image_catalog_api(saved)
+
+
+def delete_sandbox_image(image_id: str) -> bool:
+    if _pool is None:
+        raise RuntimeError("History pool not initialized")
+    with _pool.connection() as conn:
+        deleted = conn.execute(
+            "DELETE FROM console_sandbox_image_catalog WHERE id = %s RETURNING id",
+            (image_id,),
+        ).fetchone()
+    return deleted is not None
 
 
 def _coerce_metadata(raw: Any) -> dict[str, str]:

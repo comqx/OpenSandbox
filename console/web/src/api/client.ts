@@ -20,6 +20,9 @@ import type {
   K8sWorkloadRow,
   PlatformGrafanaSettings,
   PlatformSummary,
+  SandboxImageCatalogInput,
+  SandboxImageCatalogItem,
+  SandboxImageCatalogResponse,
   SandboxMonitorResponse,
   PoolListResponse,
   PoolItem,
@@ -302,6 +305,22 @@ export const poolApi = {
     }),
   remove: (name: string) =>
     apiRequest<void>(`/api/pools/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+};
+
+export const imageCatalogApi = {
+  list: () => apiRequest<SandboxImageCatalogResponse>('/api/images/catalog'),
+  create: (body: SandboxImageCatalogInput) =>
+    apiRequest<SandboxImageCatalogItem>('/api/images/catalog', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  update: (id: string, body: SandboxImageCatalogInput) =>
+    apiRequest<SandboxImageCatalogItem>(`/api/images/catalog/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  remove: (id: string) =>
+    apiRequest<void>(`/api/images/catalog/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 export const platformApi = {

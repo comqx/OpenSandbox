@@ -111,6 +111,19 @@ Server health/version plus component placeholders.
 
 See [07-sandbox-history.md](./07-sandbox-history.md) for `/api/history/*`.
 
+## Sandbox image catalog
+
+Shared directory of base images. Any signed-in tenant or admin can list and edit it. Entries are stored in PostgreSQL table `console_sandbox_image_catalog` when history is enabled, otherwise in `BFF_IMAGE_CATALOG_PATH`.
+
+| Method | Path | Body |
+|--------|------|------|
+| GET | `/api/images/catalog` | `{ "items", "persisted", "source" }` |
+| POST | `/api/images/catalog` | `displayName`, `imageUri`, optional `scenarios` / `systemPackages` / `runtimePackages` / `maintainer` |
+| PATCH | `/api/images/catalog/{id}` | same fields, partial |
+| DELETE | `/api/images/catalog/{id}` | 204 |
+
+`scenarios`, `systemPackages`, and `runtimePackages` are string lists. A comma-separated string is accepted and split. `maintainer` defaults to the admin role or the tenant name. Duplicate `imageUri` returns 409. Writes return 503 when neither the history database nor `BFF_IMAGE_CATALOG_PATH` is configured.
+
 ## Health
 
 - `GET /health` → `{ "status": "ok" }`

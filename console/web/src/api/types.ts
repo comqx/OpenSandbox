@@ -272,6 +272,35 @@ export interface ApiErrorBody {
   message?: string;
 }
 
+export interface SandboxImageCatalogItem {
+  id: string;
+  displayName: string;
+  imageUri: string;
+  scenarios: string[];
+  systemPackages: string[];
+  runtimePackages: string[];
+  maintainer: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SandboxImageCatalogResponse {
+  items: SandboxImageCatalogItem[];
+  persisted?: boolean;
+  source?: string;
+}
+
+export interface SandboxImageCatalogInput {
+  displayName: string;
+  imageUri: string;
+  scenarios: string[];
+  systemPackages: string[];
+  runtimePackages: string[];
+  maintainer?: string;
+}
+
 export interface PlatformGrafanaSettings {
   enabled?: boolean;
   baseUrl?: string;

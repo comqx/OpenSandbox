@@ -57,6 +57,7 @@ In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.exa
 | `BFF_GRAFANA_DATASOURCE_UID` | `prometheus` | Datasource name/UID |
 | `BFF_GRAFANA_AUTH_PROXY_*` | | Proxy mode headers |
 | `BFF_PLATFORM_SETTINGS_PATH` | empty | JSON overrides when history DB is off |
+| `BFF_IMAGE_CATALOG_PATH` | empty | JSON file for the sandbox image catalog when history DB is off |
 
 Admins can override Grafana settings in **Platform → System settings** (PostgreSQL or `BFF_PLATFORM_SETTINGS_PATH`). The console does **not** store Grafana passwords.
 
