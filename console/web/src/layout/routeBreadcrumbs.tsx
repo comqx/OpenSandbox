@@ -77,7 +77,7 @@ export function buildRouteBreadcrumbs(
   }
 
   if (pathname === '/history/mirror-accel') {
-    return [home, imageGroup, { title: '镜像加速' }];
+    return [home, imageGroup, { title: '依赖包加速器' }];
   }
 
   if (pathname === '/images/sandbox-build') {

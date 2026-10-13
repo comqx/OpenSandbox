@@ -94,7 +94,7 @@ export function AppLayout() {
         children: [
           { key: '/images/list', label: '沙箱镜像列表' },
           { key: '/history/images', label: '镜像运行统计' },
-          { key: '/history/mirror-accel', label: '镜像加速' },
+          { key: '/history/mirror-accel', label: '依赖包加速器' },
           { key: '/images/sandbox-build', label: '沙箱镜像制作' },
         ],
       },

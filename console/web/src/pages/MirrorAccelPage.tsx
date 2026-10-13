@@ -67,7 +67,7 @@ export function MirrorAccelPage() {
   return (
     <div>
       <Typography.Title level={4} style={{ marginTop: 0 }}>
-        镜像加速
+        依赖包加速器
       </Typography.Title>
       <Typography.Paragraph type="secondary">
         集群内 mirrorproxy 提供的依赖包加速地址，供沙箱 Pod 内安装 Python / Node 依赖时使用（地址仅在集群 Service
