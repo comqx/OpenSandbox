@@ -18,7 +18,7 @@ import asyncio
 from typing import Any
 
 import httpx
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, status
 
 from app.config import Settings
 from app.grafana_monitor import build_sandbox_monitor
@@ -46,7 +46,6 @@ async def _fetch_sandbox(settings: Settings, tenant_name: str, sandbox_id: str) 
 
 async def sandbox_monitor_response(
     settings: Settings,
-    request: Request,
     *,
     sandbox_id: str,
     tenant_name: str,
@@ -65,7 +64,6 @@ async def sandbox_monitor_response(
             detail={"code": "NOT_FOUND", "message": "Sandbox not found for this tenant"},
         )
 
-    base = str(request.base_url).rstrip("/")
     return await build_sandbox_monitor(
         settings,
         sandbox_id=sandbox_id,
@@ -73,5 +71,4 @@ async def sandbox_monitor_response(
         k8s_namespace=k8s_namespace,
         sandbox=sandbox,
         history=history,
-        request_base_url=base,
     )

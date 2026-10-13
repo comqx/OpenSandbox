@@ -20,6 +20,12 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from app.config import Settings, get_settings
 from app.deps import get_session_payload, require_admin_session, require_tenant_session
+from app.grafana_proxy import (
+    grafana_app_url,
+    grafana_proxy_allowed,
+    grafana_response_headers,
+    rewrite_grafana_payload,
+)
 from app.monitor_context import sandbox_monitor_response
 from app.platform_settings import get_platform_settings, save_platform_settings
 
@@ -57,14 +63,12 @@ async def patch_settings_admin(
 @router.get("/sandboxes/{sandbox_id}/monitor")
 async def tenant_sandbox_monitor(
     sandbox_id: str,
-    request: Request,
     payload: dict = Depends(get_session_payload),
 ) -> dict[str, Any]:
     require_tenant_session(payload)
     tenant_name = str(payload.get("tenant"))
     return await sandbox_monitor_response(
         get_settings(),
-        request,
         sandbox_id=sandbox_id,
         tenant_name=tenant_name,
     )
@@ -110,10 +114,11 @@ async def _proxy_grafana(request: Request, path: str, payload: dict) -> Response
     if query:
         target = f"{target}?{query}"
 
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "cookie", "content-length")}
+    dropped_request_headers = {"host", "cookie", "content-length", "authorization"}
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in dropped_request_headers}
     headers.update(_auth_proxy_headers(settings, payload))
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=120.0) as client:
         upstream_resp = await client.request(
             request.method,
             target,
@@ -121,15 +126,18 @@ async def _proxy_grafana(request: Request, path: str, payload: dict) -> Response
             content=await request.body(),
         )
 
-    excluded = {"transfer-encoding", "connection", "content-encoding"}
-    resp_headers = {
-        k: v for k, v in upstream_resp.headers.items() if k.lower() not in excluded
-    }
+    content_type = upstream_resp.headers.get("content-type")
+    body = rewrite_grafana_payload(
+        upstream_resp.content,
+        content_type,
+        upstream_base=upstream,
+        app_url=grafana_app_url(dict(request.headers)),
+    )
     return Response(
-        content=upstream_resp.content,
+        content=body,
         status_code=upstream_resp.status_code,
-        headers=resp_headers,
-        media_type=upstream_resp.headers.get("content-type"),
+        headers=grafana_response_headers(list(upstream_resp.headers.items()), upstream),
+        media_type=content_type,
     )
 
 
@@ -145,9 +153,9 @@ async def grafana_proxy(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "FORBIDDEN", "message": "Valid session required for Grafana proxy"},
         )
-    if not path.startswith("d/"):
+    if not grafana_proxy_allowed(path, request.method):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "FORBIDDEN", "message": "Only dashboard paths are proxied"},
+            detail={"code": "FORBIDDEN", "message": "Grafana path is not allowed"},
         )
     return await _proxy_grafana(request, path, payload)

@@ -14,20 +14,25 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.history import reconcile
 from app.lifecycle import LifecycleClient
 from app.history.store import close_history_pool, init_history_pool
 from app.platform_settings import init_platform_settings
 from app.routes import admin, auth, history, platform, pools, sandboxes, shell, snapshots
 
 app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
+_history_poll_task: asyncio.Task[None] | None = None
 
 
 @app.on_event("startup")
-def validate_config() -> None:
+async def validate_config() -> None:
+    global _history_poll_task
     settings = get_settings()
     if not settings.tenants_toml_path:
         raise RuntimeError("TENANTS_TOML_PATH is required")
@@ -35,10 +40,19 @@ def validate_config() -> None:
         raise RuntimeError("BFF_SESSION_SECRET and BFF_ADMIN_TOKEN are required")
     init_history_pool(settings)
     init_platform_settings(settings)
+    _history_poll_task = asyncio.create_task(reconcile.poll_forever(settings))
 
 
 @app.on_event("shutdown")
-def shutdown_history() -> None:
+async def shutdown_history() -> None:
+    global _history_poll_task
+    if _history_poll_task is not None:
+        _history_poll_task.cancel()
+        try:
+            await _history_poll_task
+        except asyncio.CancelledError:
+            pass
+        _history_poll_task = None
     close_history_pool()
 
 

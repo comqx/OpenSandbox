@@ -85,7 +85,7 @@ Query **`tenant`** required for `{id}` read/write, diagnostics, monitor, and she
 
 - `GET /api/admin/platform/settings`
 - `PATCH /api/admin/platform/settings`
-- `GET|HEAD|POST /api/grafana/d/...` when `embedMode=proxy`
+- `GET|HEAD|POST /api/grafana/...` when `embedMode=proxy`. The proxy serves the dashboard page, `/public/` assets, and read-only dashboard APIs. HTML is rewritten onto this prefix so Grafana's public `root_url` stays unchanged. Admin, user, and datasource writes are rejected.
 
 ### Admin snapshots
 

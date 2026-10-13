@@ -15,6 +15,7 @@
 from datetime import datetime, timezone
 
 from app.grafana_monitor import (
+    build_embed_urls,
     build_grafana_dashboard_path,
     datasource_query_param,
     resolve_time_range,
@@ -90,6 +91,25 @@ def test_bare_datasource_variable_name_gets_var_prefix():
         {"varDatasource": "DS_PROM", "datasourceUid": "cfzrpakzi1rlsd"},
     )
     assert (name, uid) == ("var-DS_PROM", "cfzrpakzi1rlsd")
+
+
+def test_proxy_iframe_is_same_origin_path():
+    cfg = {
+        "baseUrl": "http://grafana.grafana:3000",
+        "embedMode": "proxy",
+    }
+    iframe, external = build_embed_urls(cfg, "/d/opensandbox-pod-node/711161a?kiosk=1")
+    assert iframe == "/api/grafana/d/opensandbox-pod-node/711161a?kiosk=1"
+    assert external == "http://grafana.grafana:3000/d/opensandbox-pod-node/711161a?kiosk=1"
+
+
+def test_direct_iframe_uses_grafana_base_url():
+    cfg = {
+        "baseUrl": "https://grafana.example.com",
+        "embedMode": "direct",
+    }
+    iframe, external = build_embed_urls(cfg, "/d/opensandbox-pod-node/711161a")
+    assert iframe == external == "https://grafana.example.com/d/opensandbox-pod-node/711161a"
 
 
 def test_primary_pod_name_for_sandbox():
