@@ -94,6 +94,23 @@ def _sync_tenant_history(
     )
 
 
+async def poll_forever(settings: Settings) -> None:
+    """Reconcile every tenant on a fixed interval. History page reads do not call this."""
+    interval = settings.bff_history_reconcile_interval_seconds
+    if not settings.bff_history_enabled or interval <= 0:
+        return
+    while True:
+        try:
+            tenants = load_tenants(settings.tenants_toml_path)
+            await sync_with_lifecycle(settings, tenants=tenants)
+            logger.info("history reconcile poll finished for %s tenants", len(tenants))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("history reconcile poll failed")
+        await asyncio.sleep(interval)
+
+
 async def sync_with_lifecycle(
     settings: Settings,
     *,
