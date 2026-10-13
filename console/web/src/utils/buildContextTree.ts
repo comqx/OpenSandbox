@@ -78,6 +78,17 @@ export function listBuildContextDirectoryKeys(paths: string[]): string[] {
   return ['dir:__context_root__', ...dirs.map((dir) => `dir:${dir}`)];
 }
 
+/** Relative path copied when a tree node is clicked. Directories keep a trailing slash. */
+export function treeKeyCopyPath(key: string): string | null {
+  if (key === 'dir:__context_root__') return './';
+  if (key.startsWith('dir:')) {
+    const path = key.slice('dir:'.length);
+    return path ? `${path}/` : null;
+  }
+  if (!key) return null;
+  return key;
+}
+
 export function listBuildContextDirectories(paths: string[]): string[] {
   const dirs = new Set<string>();
   for (const path of paths) {

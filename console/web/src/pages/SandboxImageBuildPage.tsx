@@ -858,13 +858,30 @@ export function SandboxImageBuildPage() {
               onMoveFile={(from, to) => void moveFile(from, to)}
             />
             <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-              终端风格：drwx 目录、rwx 脚本、证书/配置等同 shell 配色。选中文件后可「移动」或拖到文件夹。
+              单击文件或目录会复制相对路径。选中文件后可编辑，也可「移动」或拖到文件夹。
             </Typography.Paragraph>
           </Card>
         </Col>
         <Col xs={24} md={16}>
           <Card
-            title={selectedFile ? selectedFile.relativePath : '选择文件'}
+            title={
+              selectedFile ? (
+                <Typography.Text
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    const path = selectedFile.relativePath;
+                    void navigator.clipboard.writeText(path).then(
+                      () => message.success(`已复制 ${path}`),
+                      () => message.error('复制失败'),
+                    );
+                  }}
+                >
+                  {selectedFile.relativePath}
+                </Typography.Text>
+              ) : (
+                '选择文件'
+              )
+            }
             size="small"
             extra={
               selectedFile ? (
@@ -889,6 +906,8 @@ export function SandboxImageBuildPage() {
               selectedFile.encoding === 'utf-8' ? (
                 <BuildContextFileEditor
                   value={selectedFile.payload}
+                  filePath={selectedFile.relativePath}
+                  dockerfilePath={dockerfilePath}
                   onChange={(value) => updateFileContent(selectedFile.relativePath, value)}
                 />
               ) : (

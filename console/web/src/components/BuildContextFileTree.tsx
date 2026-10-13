@@ -19,7 +19,7 @@ import {
   FolderOutlined,
   KeyOutlined,
 } from '@ant-design/icons';
-import { Tree, Typography } from 'antd';
+import { message, Tree, Typography } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import type { TreeProps } from 'antd/es/tree';
 import type { ReactNode } from 'react';
@@ -29,6 +29,7 @@ import {
   buildContextTreeData,
   listBuildContextDirectoryKeys,
   resolveTreeDropMove,
+  treeKeyCopyPath,
   wrapBuildContextTreeRoot,
 } from '../utils/buildContextTree';
 import {
@@ -44,6 +45,17 @@ const { DirectoryTree } = Tree;
 
 function nodeLabel(node: DataNode, fallback: string): string {
   return typeof node.title === 'string' ? node.title : fallback;
+}
+
+async function copyTreeKey(key: string) {
+  const path = treeKeyCopyPath(key);
+  if (!path) return;
+  try {
+    await navigator.clipboard.writeText(path);
+    message.success(`已复制 ${path}`);
+  } catch {
+    message.error('复制失败');
+  }
 }
 
 function shellIcon(kind: ShellEntryPresentation['kind']): ReactNode {
@@ -96,6 +108,7 @@ function decorateTreeNodes(nodes: DataNode[], dockerfilePath: string): DataNode[
       const presentation = classifyShellEntry(key, true, dockerfilePath);
       return {
         ...node,
+        selectable: true,
         icon: <span style={{ color: presentation.color }}>{shellIcon(presentation.kind)}</span>,
         title: (
           <ShellTreeLabel
@@ -196,7 +209,9 @@ export function BuildContextFileTree({
         treeData={treeData}
         onSelect={(keys) => {
           const key = keys[0];
-          if (typeof key === 'string' && !key.startsWith('dir:')) {
+          if (typeof key !== 'string') return;
+          void copyTreeKey(key);
+          if (!key.startsWith('dir:')) {
             onSelectPath(key);
           }
         }}

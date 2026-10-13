@@ -19,6 +19,7 @@ import {
   buildContextTreeData,
   listBuildContextDirectories,
   resolveTreeDropMove,
+  treeKeyCopyPath,
   wrapBuildContextTreeRoot,
 } from '../src/utils/buildContextTree.ts';
 
@@ -47,6 +48,15 @@ test('listBuildContextDirectories collects parent paths', () => {
     'certs',
     'certs/sub',
   ]);
+});
+
+test('treeKeyCopyPath copies files and directory paths', () => {
+  assert.equal(treeKeyCopyPath('Dockerfile'), 'Dockerfile');
+  assert.equal(treeKeyCopyPath('certs/a.csr'), 'certs/a.csr');
+  assert.equal(treeKeyCopyPath('dir:certs'), 'certs/');
+  assert.equal(treeKeyCopyPath('dir:certs/sub'), 'certs/sub/');
+  assert.equal(treeKeyCopyPath('dir:__context_root__'), './');
+  assert.equal(treeKeyCopyPath(''), null);
 });
 
 test('wrapBuildContextTreeRoot groups root-level files', () => {
