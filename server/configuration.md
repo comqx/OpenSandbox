@@ -341,7 +341,7 @@ the same backend.
 | `postgresql.connect_timeout_seconds` | integer | `5` | Maximum time to establish the initial PostgreSQL connections. |
 | `postgresql.pool_timeout_seconds` | number | `5` | Maximum time to wait for a pooled PostgreSQL connection. |
 | `postgresql.snapshot_recovery_interval_seconds` | number | `15` | Interval between unfinished snapshot recovery scans when PostgreSQL is paired with the Kubernetes runtime. This controls takeover latency, not correctness. |
-| `lifecycle_audit.enabled` | boolean | `false` | When `true` with `type = "postgresql"`, upsert sandbox create/delete into shared table `sandbox_lifecycle_history` (async, best-effort). Console BFF uses the same table. Does not change Lifecycle API behavior. |
+| `lifecycle_audit.enabled` | boolean | `false` | When `true` with `type = "postgresql"`, upsert sandbox create/delete into shared table `sandbox_lifecycle_history` (async, best-effort), including the sandbox `metadata` label map. Console BFF uses the same table. Does not change Lifecycle API behavior. |
 
 **Notes**
 
