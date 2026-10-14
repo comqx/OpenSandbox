@@ -124,6 +124,18 @@ Shared directory of base images. Any signed-in tenant or admin can list and edit
 
 `scenarios`, `systemPackages`, and `runtimePackages` are string lists. A comma-separated string is accepted and split. `maintainer` defaults to the admin role or the tenant name. Duplicate `imageUri` returns 409. Writes return 503 when neither the history database nor `BFF_IMAGE_CATALOG_PATH` is configured.
 
+### Node image preheat
+
+One-shot pull of a catalog image onto selected nodes. The BFF creates a short-lived Pod in the tenant namespace and does not call the lifecycle server. Any signed-in user can start it. A tenant session is limited to its own namespace. An admin session must pass `tenant`.
+
+| Method | Path | Notes |
+|--------|------|--------|
+| GET | `/api/images/catalog/{id}/preheat/nodes` | Ready, uncordoned nodes. `{ tenant, namespace, nodes: [{ name }] }` |
+| POST | `/api/images/catalog/{id}/preheat` | `{ nodeNames, tenant? }` → `{ preheatId, tenant, namespace, imageUri, nodes }` |
+| GET | `/api/images/catalog/preheats/{preheatId}` | Poll node `state`: `pulling`, `succeeded`, `failed`. Terminal Pods are deleted after the status is returned. |
+
+Private registries use the namespace `default` ServiceAccount `imagePullSecrets`. Pull credentials created only for a sandbox are not reused. The BFF ServiceAccount needs `nodes` get/list, `serviceaccounts` get, and `pods` create/delete. See [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml).
+
 ## Sandbox image build context (Phase 2a)
 
 Requires `BFF_HISTORY_ENABLED`, `BFF_IMAGE_BUILD_ENABLED=true`, and OSS credentials (`BFF_IMAGE_BUILD_OSS_*` or fallback `BFF_NODEAGENT_OSS_*`). Admin calls must include `?tenant=`.

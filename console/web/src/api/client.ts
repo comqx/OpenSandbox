@@ -23,6 +23,8 @@ import type {
   SandboxImageCatalogInput,
   SandboxImageCatalogItem,
   SandboxImageCatalogResponse,
+  PreheatNodesResponse,
+  PreheatStatusResponse,
   BuildContextItem,
   BuildContextListResponse,
   BuildContextFileResponse,
@@ -409,6 +411,27 @@ export const imageCatalogApi = {
     }),
   remove: (id: string) =>
     apiRequest<void>(`/api/images/catalog/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  preheatNodes: (id: string, tenant?: string) => {
+    const params = new URLSearchParams();
+    if (tenant) params.set('tenant', tenant);
+    const qs = params.toString();
+    return apiRequest<PreheatNodesResponse>(
+      `/api/images/catalog/${encodeURIComponent(id)}/preheat/nodes${qs ? `?${qs}` : ''}`,
+    );
+  },
+  startPreheat: (id: string, nodeNames: string[], tenant?: string) =>
+    apiRequest<PreheatStatusResponse>(`/api/images/catalog/${encodeURIComponent(id)}/preheat`, {
+      method: 'POST',
+      body: JSON.stringify({ nodeNames, ...(tenant ? { tenant } : {}) }),
+    }),
+  preheatStatus: (preheatId: string, tenant?: string) => {
+    const params = new URLSearchParams();
+    if (tenant) params.set('tenant', tenant);
+    const qs = params.toString();
+    return apiRequest<PreheatStatusResponse>(
+      `/api/images/catalog/preheats/${encodeURIComponent(preheatId)}${qs ? `?${qs}` : ''}`,
+    );
+  },
 };
 
 export const platformApi = {

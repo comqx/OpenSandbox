@@ -25,6 +25,7 @@ Core lifecycle flows go through the **BFF**; optional **server lifecycle audit**
 | Pause / resume | 🔶 | pause / resume | detail |
 | Tenant overview KPI | ✅ | list aggregation | `/` |
 | Sandbox image list | ✅ | `/api/images/catalog` | `/images/list` |
+| Node image preheat | 🔶 | catalog preheat APIs; needs node list and pod create RBAC | image list action |
 | Mirror accel URLs | ✅ | static UI | `/history/mirror-accel` |
 | Sandbox image build | 🟡 Phase 2a | editor + local tar; PG/OSS drafts when configured; remote build TBD | `/images/sandbox-build` |
 

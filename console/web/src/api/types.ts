@@ -292,6 +292,27 @@ export interface SandboxImageCatalogResponse {
   source?: string;
 }
 
+export interface PreheatNodeStatus {
+  nodeName: string;
+  podName: string;
+  state: 'pulling' | 'succeeded' | 'failed';
+  message: string;
+}
+
+export interface PreheatNodesResponse {
+  tenant: string;
+  namespace: string;
+  nodes: { name: string }[];
+}
+
+export interface PreheatStatusResponse {
+  preheatId: string;
+  tenant: string;
+  namespace: string;
+  imageUri?: string;
+  nodes: PreheatNodeStatus[];
+}
+
 export interface SandboxImageCatalogInput {
   displayName: string;
   imageUri: string;

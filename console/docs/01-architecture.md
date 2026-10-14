@@ -7,10 +7,10 @@ flowchart LR
   Browser[Browser SPA]
   BFF[Console BFF]
   Life[Lifecycle Server /v1]
-  K8s[K8s API read-only]
+  K8s[K8s API]
   Browser --> BFF
   BFF -->|tenant key proxy| Life
-  BFF -->|admin optional| K8s
+  BFF -->|read workloads; create image-preheat pods| K8s
 ```
 
 - **SPA**: static assets (nginx or same-origin reverse proxy). No Lifecycle API key in the bundle.

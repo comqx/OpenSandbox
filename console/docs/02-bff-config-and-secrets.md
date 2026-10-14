@@ -32,7 +32,7 @@
 | `BFF_NODEAGENT_OSS_*` | empty | Read-only OSS credentials (same key layout as node-agent writer) |
 | `BFF_NODEAGENT_ARCHIVE_MAX_BYTES` | `524288` | Max bytes per archive response |
 
-In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) to list pods. Archive logs require node-agent **OSS sink** (file sink on hostPath is not readable cluster-wide).
+In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) to list pods and, for node image preheat, to list nodes and create or delete the short-lived pull Pods. Archive logs require node-agent **OSS sink** (file sink on hostPath is not readable cluster-wide).
 
 ### Optional: sandbox history (PostgreSQL)
 

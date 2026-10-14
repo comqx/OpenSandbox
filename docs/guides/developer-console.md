@@ -31,6 +31,8 @@ Browser → Console Web (static) → Console BFF (/api) → Lifecycle API (/v1)
                                       ↓
                               tenants.toml (same as server)
                                       ↓
+                              Kubernetes API (image preheat pods only)
+                                      ↓
                               execd PTY (shell only, after endpoint lookup)
 ```
 
