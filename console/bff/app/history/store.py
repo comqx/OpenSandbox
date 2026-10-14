@@ -163,6 +163,31 @@ def _ensure_schema(pool: ConnectionPool) -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS console_image_preheat (
+                id TEXT PRIMARY KEY,
+                preheat_id TEXT NOT NULL,
+                image_id TEXT NOT NULL,
+                image_uri TEXT NOT NULL,
+                tenant_name TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                node_name TEXT NOT NULL,
+                pod_name TEXT NOT NULL,
+                state TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                finished_at TIMESTAMPTZ
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_console_image_preheat_image
+                ON console_image_preheat (image_id, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS console_sandbox_build_context (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
@@ -268,6 +293,95 @@ def _image_catalog_api(row: dict[str, Any]) -> dict[str, Any]:
         "createdAt": _iso_timestamp(row.get("created_at")),
         "updatedAt": _iso_timestamp(row.get("updated_at")),
     }
+
+
+def _preheat_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "preheatId": row["preheat_id"],
+        "imageId": row["image_id"],
+        "imageUri": row["image_uri"],
+        "tenant": row["tenant_name"],
+        "namespace": row["namespace"],
+        "nodeName": row["node_name"],
+        "podName": row["pod_name"],
+        "state": row["state"],
+        "message": row.get("message") or "",
+        "createdBy": row.get("created_by") or "",
+        "createdAt": _iso_timestamp(row.get("created_at")),
+        "finishedAt": _iso_timestamp(row.get("finished_at")),
+    }
+
+
+def insert_image_preheats(rows: list[dict[str, Any]]) -> None:
+    if _pool is None:
+        raise RuntimeError("History pool not initialized")
+    with _pool.connection() as conn:
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO console_image_preheat (
+                    id, preheat_id, image_id, image_uri, tenant_name, namespace,
+                    node_name, pod_name, state, message, created_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    row["id"],
+                    row["preheatId"],
+                    row["imageId"],
+                    row["imageUri"],
+                    row["tenant"],
+                    row["namespace"],
+                    row["nodeName"],
+                    row["podName"],
+                    row["state"],
+                    row.get("message") or "",
+                    row.get("createdBy") or "",
+                ),
+            )
+
+
+def list_image_preheats(image_id: str, tenant: str | None) -> list[dict[str, Any]]:
+    if _pool is None:
+        return []
+    with _pool.connection() as conn:
+        if tenant:
+            rows = conn.execute(
+                """
+                SELECT * FROM console_image_preheat
+                WHERE image_id = %s AND tenant_name = %s
+                ORDER BY created_at DESC, node_name ASC
+                """,
+                (image_id, tenant),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM console_image_preheat
+                WHERE image_id = %s
+                ORDER BY created_at DESC, node_name ASC
+                """,
+                (image_id,),
+            ).fetchall()
+    return [_preheat_api(row) for row in rows]
+
+
+def mark_image_preheat(row_id: str, state: str, message: str) -> bool:
+    if _pool is None:
+        raise RuntimeError("History pool not initialized")
+    with _pool.connection() as conn:
+        updated = conn.execute(
+            """
+            UPDATE console_image_preheat
+            SET state = %s,
+                message = %s,
+                finished_at = CASE WHEN %s = 'pulling' THEN NULL ELSE NOW() END
+            WHERE id = %s AND state = 'pulling'
+            """,
+            (state, message, state, row_id),
+        )
+        return updated.rowcount == 1
 
 
 def list_sandbox_images() -> list[dict[str, Any]]:

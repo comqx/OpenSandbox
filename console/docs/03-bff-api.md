@@ -132,7 +132,8 @@ One-shot pull of a catalog image onto selected nodes. The BFF creates a short-li
 |--------|------|--------|
 | GET | `/api/images/catalog/{id}/preheat/nodes` | Ready, uncordoned nodes. `{ tenant, namespace, nodes: [{ name }] }` |
 | POST | `/api/images/catalog/{id}/preheat` | `{ nodeNames, tenant? }` → `{ preheatId, tenant, namespace, imageUri, nodes }` |
-| GET | `/api/images/catalog/preheats/{preheatId}` | Poll node `state`: `pulling`, `succeeded`, `failed`. Terminal Pods are deleted after the status is returned. |
+| GET | `/api/images/catalog/{id}/preheats` | History for that image. `{ persisted, items }`. A tenant sees only their rows. Opening the list reconciles `pulling` rows, and only while a row is still `pulling`. It deletes a Pod after that update, and retries deletion for a row that is already terminal. `persisted: false` when the history database is off. |
+| GET | `/api/images/catalog/preheats/{preheatId}` | Current Pod status for one preheat. Does not write history and does not delete Pods. |
 
 Private registries use the namespace `default` ServiceAccount `imagePullSecrets`. Pull credentials created only for a sandbox are not reused. The BFF ServiceAccount needs `nodes` get/list, `serviceaccounts` get, and `pods` create/delete. See [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml).
 

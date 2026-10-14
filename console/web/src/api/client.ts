@@ -23,6 +23,7 @@ import type {
   SandboxImageCatalogInput,
   SandboxImageCatalogItem,
   SandboxImageCatalogResponse,
+  PreheatHistoryResponse,
   PreheatNodesResponse,
   PreheatStatusResponse,
   BuildContextItem,
@@ -424,14 +425,8 @@ export const imageCatalogApi = {
       method: 'POST',
       body: JSON.stringify({ nodeNames, ...(tenant ? { tenant } : {}) }),
     }),
-  preheatStatus: (preheatId: string, tenant?: string) => {
-    const params = new URLSearchParams();
-    if (tenant) params.set('tenant', tenant);
-    const qs = params.toString();
-    return apiRequest<PreheatStatusResponse>(
-      `/api/images/catalog/preheats/${encodeURIComponent(preheatId)}${qs ? `?${qs}` : ''}`,
-    );
-  },
+  preheatHistory: (id: string) =>
+    apiRequest<PreheatHistoryResponse>(`/api/images/catalog/${encodeURIComponent(id)}/preheats`),
 };
 
 export const platformApi = {

@@ -106,6 +106,17 @@ async def post_preheat(
         raise _preheat_error(exc) from exc
 
 
+@router.get("/{image_id}/preheats")
+async def get_preheat_history(
+    image_id: str,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    try:
+        return preheat_backend().list_history(payload, image_id)
+    except ImagePreheatError as exc:
+        raise _preheat_error(exc) from exc
+
+
 @router.get("/preheats/{preheat_id}")
 async def get_preheat(
     preheat_id: str,

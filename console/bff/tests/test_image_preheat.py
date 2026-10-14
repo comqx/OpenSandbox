@@ -102,6 +102,7 @@ def test_build_preheat_pod_pulls_without_starting_a_sandbox():
     assert container["image"] == "hub.example.com/python:3.12"
     assert container["imagePullPolicy"] == "IfNotPresent"
     assert container["command"] == ["/opensandbox-preheat-noop"]
+    assert container["resources"]["limits"]["memory"] == "512Mi"
     assert "securityContext" not in container
     assert pod["spec"].get("hostNetwork") is not True
 
@@ -191,6 +192,7 @@ class FakePreheatClient:
         self.nodes = nodes
         self.secrets = secrets or {}
         self.fail_nodes = fail_nodes or set()
+        self.fail_delete = False
         self.created: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
 
@@ -216,11 +218,11 @@ class FakePreheatClient:
         )
 
     def list_pods(self, namespace: str, label_selector: str) -> list[dict]:
-        preheat_id = label_selector.split("=", 1)[1]
+        key, _, value = label_selector.partition("=")
         rows = []
         for pod in self.created:
             labels = pod["body"]["metadata"]["labels"]
-            if pod["namespace"] == namespace and labels["opensandbox.io/preheat-id"] == preheat_id:
+            if pod["namespace"] == namespace and labels.get(key) == value:
                 rows.append(
                     {
                         "name": pod["body"]["metadata"]["name"],
@@ -234,6 +236,8 @@ class FakePreheatClient:
         return rows
 
     def delete_pod(self, namespace: str, name: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
         self.deleted.append((namespace, name))
         self.created = [
             pod
@@ -275,7 +279,7 @@ def test_start_creates_one_pod_per_selected_node_and_rejects_others(tmp_path):
     assert rejected.value.status_code == 400
 
 
-def test_get_deletes_terminal_pods_and_start_rolls_back(tmp_path):
+def test_get_reads_status_without_deleting_pods_and_start_rolls_back(tmp_path):
     _write_tenants(tmp_path)
     settings = _settings(tmp_path)
     init_image_catalog(settings)
@@ -298,8 +302,8 @@ def test_get_deletes_terminal_pods_and_start_rolls_back(tmp_path):
     status = service.get({"role": "admin"}, started["preheatId"], "acme")
     assert [node["state"] for node in status["nodes"]] == ["succeeded", "failed"]
     assert status["nodes"][1]["message"] == "unauthorized"
-    assert client.created == []
-    assert len(client.deleted) == 2
+    assert len(client.created) == 2
+    assert client.deleted == []
 
     failing = FakePreheatClient(
         [
@@ -316,3 +320,135 @@ def test_get_deletes_terminal_pods_and_start_rolls_back(tmp_path):
         )
     assert failing.created == []
     assert len(failing.deleted) == 1
+
+
+class MemoryPreheatHistory:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def available(self) -> bool:
+        return True
+
+    def insert_nodes(self, rows: list[dict]) -> None:
+        self.rows.extend(rows)
+
+    def list_for_image(self, image_id: str, tenant: str | None) -> list[dict]:
+        matched = [row for row in self.rows if row["imageId"] == image_id]
+        if tenant:
+            matched = [row for row in matched if row["tenant"] == tenant]
+        return list(reversed(matched))
+
+    def mark(self, row_id: str, state: str, message: str) -> bool:
+        for row in self.rows:
+            if row["id"] == row_id and row["state"] == "pulling":
+                row["state"] = state
+                row["message"] = message
+                return True
+        return False
+
+
+def test_history_records_each_node_and_reconciles_finished_pods(tmp_path):
+    _write_tenants(tmp_path)
+    settings = _settings(tmp_path)
+    init_image_catalog(settings)
+    image = create_image({"displayName": "Python", "imageUri": "hub.example.com/python:3.12"}, "acme")
+    client = FakePreheatClient(
+        [
+            {"name": "node-a", "ready": True, "unschedulable": False},
+            {"name": "node-b", "ready": True, "unschedulable": False},
+        ]
+    )
+    history = MemoryPreheatHistory()
+    service = ImagePreheatService(settings, client, history)
+    started = service.start(
+        {"role": "tenant", "tenant": "acme", "namespace": "acme-ns"},
+        image["id"],
+        {"nodeNames": ["node-a", "node-b"]},
+    )
+    assert [row["nodeName"] for row in history.rows] == ["node-a", "node-b"]
+    assert all(row["state"] == "pulling" for row in history.rows)
+    client.created[0]["imageId"] = "sha256:pulled"
+    listed = service.list_history({"role": "tenant", "tenant": "acme", "namespace": "acme-ns"}, image["id"])
+    assert listed["persisted"] is True
+    by_node = {item["nodeName"]: item for item in listed["items"]}
+    assert by_node["node-a"]["state"] == "succeeded"
+    assert by_node["node-b"]["state"] == "pulling"
+    assert started["preheatId"] == history.rows[0]["preheatId"]
+    assert len(client.deleted) == 1
+
+
+def test_history_marks_a_missing_pod_failed(tmp_path):
+    _write_tenants(tmp_path)
+    settings = _settings(tmp_path)
+    init_image_catalog(settings)
+    image = create_image({"displayName": "Python", "imageUri": "hub.example.com/python:3.12"}, "acme")
+    history = MemoryPreheatHistory()
+    history.insert_nodes(
+        [
+            {
+                "id": "row-1",
+                "preheatId": "11111111-1111-1111-1111-111111111111",
+                "imageId": image["id"],
+                "imageUri": image["imageUri"],
+                "tenant": "acme",
+                "namespace": "acme-ns",
+                "nodeName": "node-a",
+                "podName": "preheat-missing",
+                "state": "pulling",
+                "message": "",
+            }
+        ]
+    )
+    service = ImagePreheatService(settings, FakePreheatClient([]), history)
+    listed = service.list_history({"role": "admin"}, image["id"])
+    assert listed["items"][0]["state"] == "failed"
+    assert listed["items"][0]["message"] == "没有找到预热 Pod"
+
+
+def test_stale_reconcile_does_not_overwrite_a_finished_row(tmp_path):
+    _write_tenants(tmp_path)
+    settings = _settings(tmp_path)
+    init_image_catalog(settings)
+    image = create_image({"displayName": "Python", "imageUri": "hub.example.com/python:3.12"}, "acme")
+    client = FakePreheatClient([{"name": "node-a", "ready": True, "unschedulable": False}])
+    history = MemoryPreheatHistory()
+    service = ImagePreheatService(settings, client, history)
+    service.start(
+        {"role": "tenant", "tenant": "acme", "namespace": "acme-ns"},
+        image["id"],
+        {"nodeNames": ["node-a"]},
+    )
+    client.created[0]["imageId"] = "sha256:pulled"
+    stale = [dict(row) for row in history.rows]
+    service.list_history({"role": "tenant", "tenant": "acme", "namespace": "acme-ns"}, image["id"])
+    assert history.rows[0]["state"] == "succeeded"
+    assert client.created == []
+    service._reconcile(stale)
+    assert history.rows[0]["state"] == "succeeded"
+    assert history.rows[0]["message"] == ""
+
+
+def test_history_retries_deleting_a_finished_pod(tmp_path):
+    _write_tenants(tmp_path)
+    settings = _settings(tmp_path)
+    init_image_catalog(settings)
+    image = create_image({"displayName": "Python", "imageUri": "hub.example.com/python:3.12"}, "acme")
+    client = FakePreheatClient([{"name": "node-a", "ready": True, "unschedulable": False}])
+    client.fail_delete = True
+    history = MemoryPreheatHistory()
+    service = ImagePreheatService(settings, client, history)
+    service.start(
+        {"role": "tenant", "tenant": "acme", "namespace": "acme-ns"},
+        image["id"],
+        {"nodeNames": ["node-a"]},
+    )
+    client.created[0]["imageId"] = "sha256:pulled"
+    listed = service.list_history({"role": "tenant", "tenant": "acme", "namespace": "acme-ns"}, image["id"])
+    assert listed["items"][0]["state"] == "succeeded"
+    assert client.deleted == []
+    assert len(client.created) == 1
+    client.fail_delete = False
+    listed = service.list_history({"role": "tenant", "tenant": "acme", "namespace": "acme-ns"}, image["id"])
+    assert listed["items"][0]["state"] == "succeeded"
+    assert len(client.deleted) == 1
+    assert client.created == []

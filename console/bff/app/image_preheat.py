@@ -21,7 +21,7 @@ import uuid
 from typing import Any, Protocol
 
 from app.config import Settings
-from app.image_catalog import list_images
+from app.image_catalog import actor_label, list_images
 from app.tenants import get_tenant_by_name
 
 PREHEAT_LABEL = "opensandbox.io/image-preheat"
@@ -42,6 +42,38 @@ class ImagePreheatError(Exception):
         self.code = code
         self.message = message
         super().__init__(message)
+
+
+class PreheatHistoryStore(Protocol):
+    def available(self) -> bool: ...
+
+    def insert_nodes(self, rows: list[dict[str, Any]]) -> None: ...
+
+    def list_for_image(self, image_id: str, tenant: str | None) -> list[dict[str, Any]]: ...
+
+    def mark(self, row_id: str, state: str, message: str) -> bool: ...
+
+
+class PostgresPreheatHistory:
+    def available(self) -> bool:
+        from app.history.store import history_pool_available
+
+        return history_pool_available()
+
+    def insert_nodes(self, rows: list[dict[str, Any]]) -> None:
+        from app.history.store import insert_image_preheats
+
+        insert_image_preheats(rows)
+
+    def list_for_image(self, image_id: str, tenant: str | None) -> list[dict[str, Any]]:
+        from app.history.store import list_image_preheats
+
+        return list_image_preheats(image_id, tenant)
+
+    def mark(self, row_id: str, state: str, message: str) -> bool:
+        from app.history.store import mark_image_preheat
+
+        return mark_image_preheat(row_id, state, message)
 
 
 class PreheatClient(Protocol):
@@ -111,8 +143,8 @@ def build_preheat_pod(
                 "imagePullPolicy": "IfNotPresent",
                 "command": list(NOOP_COMMAND),
                 "resources": {
-                    "requests": {"cpu": "1m", "memory": "1Mi"},
-                    "limits": {"cpu": "1m", "memory": "1Mi"},
+                    "requests": {"cpu": "100m", "memory": "512Mi"},
+                    "limits": {"cpu": "100m", "memory": "512Mi"},
                 },
             }
         ],
@@ -177,9 +209,15 @@ def _node_names(body: dict[str, Any]) -> list[str]:
 
 
 class ImagePreheatService:
-    def __init__(self, settings: Settings, client: PreheatClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: PreheatClient,
+        history: PreheatHistoryStore | None = None,
+    ) -> None:
         self._settings = settings
         self._client = client
+        self._history = history if history is not None else PostgresPreheatHistory()
 
     def list_nodes(self, payload: dict[str, Any], image_id: str, requested_tenant: str | None) -> dict[str, Any]:
         _catalog_image(image_id)
@@ -224,21 +262,90 @@ class ImagePreheatService:
         except Exception as exc:
             self._rollback(namespace, created)
             raise ImagePreheatError(502, "PREHEAT_FAILED", "创建预热 Pod 失败") from exc
+        nodes = [
+            {
+                "nodeName": node_name,
+                "podName": pod_name(preheat_id, node_name),
+                "state": "pulling",
+                "message": "",
+            }
+            for node_name in node_names
+        ]
+        if self._history.available():
+            try:
+                self._history.insert_nodes(
+                    [
+                        {
+                            "id": str(uuid.uuid4()),
+                            "preheatId": preheat_id,
+                            "imageId": image_id,
+                            "imageUri": image["imageUri"],
+                            "tenant": tenant,
+                            "namespace": namespace,
+                            "nodeName": node["nodeName"],
+                            "podName": node["podName"],
+                            "state": "pulling",
+                            "message": "",
+                            "createdBy": actor_label(payload),
+                        }
+                        for node in nodes
+                    ]
+                )
+            except Exception as exc:
+                self._rollback(namespace, created)
+                raise ImagePreheatError(502, "PREHEAT_HISTORY_FAILED", "预热已取消：写历史失败") from exc
         return {
             "preheatId": preheat_id,
             "tenant": tenant,
             "namespace": namespace,
             "imageUri": image["imageUri"],
-            "nodes": [
-                {
-                    "nodeName": node_name,
-                    "podName": pod_name(preheat_id, node_name),
-                    "state": "pulling",
-                    "message": "",
-                }
-                for node_name in node_names
-            ],
+            "nodes": nodes,
         }
+
+    def list_history(self, payload: dict[str, Any], image_id: str) -> dict[str, Any]:
+        _catalog_image(image_id)
+        if not self._history.available():
+            return {"persisted": False, "items": []}
+        tenant_filter = str(payload.get("tenant") or "") if payload.get("role") == "tenant" else None
+        self._reconcile(self._history.list_for_image(image_id, tenant_filter or None))
+        return {"persisted": True, "items": self._history.list_for_image(image_id, tenant_filter or None)}
+
+    def _reconcile(self, rows: list[dict[str, Any]]) -> None:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if row.get("state") not in _TERMINAL | {"pulling"}:
+                continue
+            namespace = str(row.get("namespace") or "")
+            if not namespace:
+                continue
+            grouped.setdefault(namespace, []).append(row)
+        for namespace, group in grouped.items():
+            try:
+                pods = self._client.list_pods(namespace, f"{PREHEAT_LABEL}=true")
+            except Exception:
+                continue
+            by_name = {str(pod.get("name") or ""): pod for pod in pods}
+            for row in group:
+                self._reconcile_row(namespace, row, by_name)
+
+    def _reconcile_row(self, namespace: str, row: dict[str, Any], pods: dict[str, dict[str, Any]]) -> None:
+        pod_name_value = str(row.get("podName") or "")
+        pod = pods.get(pod_name_value)
+        if row.get("state") == "pulling":
+            row_id = str(row.get("id") or "")
+            if pod is None:
+                self._history.mark(row_id, "failed", "没有找到预热 Pod")
+                return
+            interpreted = interpret_pod(pod)
+            if interpreted["state"] not in _TERMINAL:
+                return
+            if self._history.mark(row_id, interpreted["state"], interpreted["message"]):
+                self._delete_pod(namespace, pod_name_value)
+            return
+        if pod is None:
+            return
+        if interpret_pod(pod)["state"] in _TERMINAL:
+            self._delete_pod(namespace, pod_name_value)
 
     def get(self, payload: dict[str, Any], preheat_id: str, requested_tenant: str | None) -> dict[str, Any]:
         try:
@@ -259,9 +366,15 @@ class ImagePreheatService:
                     "message": interpreted["message"],
                 }
             )
-            if interpreted["state"] in _TERMINAL and name:
-                self._client.delete_pod(namespace, name)
         return {"preheatId": preheat_id, "tenant": tenant, "namespace": namespace, "nodes": nodes}
+
+    def _delete_pod(self, namespace: str, name: str) -> None:
+        if not name:
+            return
+        try:
+            self._client.delete_pod(namespace, name)
+        except Exception:
+            return
 
     def _rollback(self, namespace: str, names: list[str]) -> None:
         for name in names:

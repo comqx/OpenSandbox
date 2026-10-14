@@ -305,6 +305,27 @@ export interface PreheatNodesResponse {
   nodes: { name: string }[];
 }
 
+export interface PreheatHistoryItem {
+  id: string;
+  preheatId: string;
+  imageId: string;
+  imageUri: string;
+  tenant: string;
+  namespace: string;
+  nodeName: string;
+  podName: string;
+  state: 'pulling' | 'succeeded' | 'failed';
+  message: string;
+  createdBy?: string;
+  createdAt?: string;
+  finishedAt?: string;
+}
+
+export interface PreheatHistoryResponse {
+  persisted: boolean;
+  items: PreheatHistoryItem[];
+}
+
 export interface PreheatStatusResponse {
   preheatId: string;
   tenant: string;

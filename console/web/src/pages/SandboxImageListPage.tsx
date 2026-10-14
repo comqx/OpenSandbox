@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom';
 import { imageCatalogApi } from '../api/client';
 import type { SandboxImageCatalogItem } from '../api/types';
 import { ImagePreheatDialog } from './ImagePreheatDialog';
+import { ImagePreheatHistoryDialog } from './ImagePreheatHistoryDialog';
 import { useAuth } from '../auth/AuthContext';
 import { YamlCodeEditor } from '../components/YamlCodeEditor';
 import { formatDateTime } from '../utils/format';
@@ -53,6 +54,7 @@ export function SandboxImageListPage() {
   const [yamlText, setYamlText] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [preheatImage, setPreheatImage] = useState<SandboxImageCatalogItem | null>(null);
+  const [historyImage, setHistoryImage] = useState<SandboxImageCatalogItem | null>(null);
 
   const defaultMaintainer = user?.role === 'admin' ? '平台' : (user?.tenant ?? '');
 
@@ -190,11 +192,14 @@ export function SandboxImageListPage() {
       {
         title: '操作',
         key: 'actions',
-        width: 280,
+        width: 360,
         render: (_value, row) => (
           <Space size="small">
             <Button type="link" size="small" onClick={() => setPreheatImage(row)}>
               节点预热
+            </Button>
+            <Button type="link" size="small" onClick={() => setHistoryImage(row)}>
+              预热历史
             </Button>
             <Button
               type="link"
@@ -283,6 +288,11 @@ export function SandboxImageListPage() {
         open={preheatImage !== null}
         isAdmin={user?.role === 'admin'}
         onClose={() => setPreheatImage(null)}
+      />
+      <ImagePreheatHistoryDialog
+        image={historyImage}
+        open={historyImage !== null}
+        onClose={() => setHistoryImage(null)}
       />
     </div>
   );
