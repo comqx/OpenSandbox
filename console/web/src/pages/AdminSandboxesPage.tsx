@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Select, Space, Table, Typography } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
+import { Alert, Input, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import { adminApi } from '../api/client';
@@ -27,6 +28,7 @@ import { sandboxShellPath } from '../utils/shellPath';
 
 export function AdminSandboxesPage() {
   const [loading, setLoading] = useState(false);
+  const [idQuery, setIdQuery] = useState('');
   const [stateFilter, setStateFilter] = useState<string | undefined>();
   const [searchParams] = useSearchParams();
   const [tenantFilter, setTenantFilter] = useState(() => searchParams.get('tenant') || ALL_TENANTS);
@@ -53,6 +55,12 @@ export function AdminSandboxesPage() {
   useEffect(() => {
     void load();
   }, [stateFilter, tenantFilter]);
+
+  const visibleItems = useMemo(() => {
+    const needle = idQuery.trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((item) => item.id.toLowerCase().includes(needle));
+  }, [idQuery, items]);
 
   const columns: ColumnsType<Sandbox> = [
     {
@@ -140,6 +148,14 @@ export function AdminSandboxesPage() {
         />
       )}
       <Space style={{ marginBottom: 16 }}>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="搜索沙箱 ID"
+          value={idQuery}
+          onChange={(e) => setIdQuery(e.target.value)}
+          style={{ width: 240 }}
+        />
         <AdminTenantSelect value={tenantFilter} onChange={setTenantFilter} />
         <Select
           allowClear
@@ -154,7 +170,7 @@ export function AdminSandboxesPage() {
         rowKey="id"
         loading={loading}
         columns={columns}
-        dataSource={items}
+        dataSource={visibleItems}
         pagination={false}
         scroll={{ x: 'max-content' }}
       />

@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Card, Col, Row, Space, Statistic, Table, Typography } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
+import { Alert, Card, Col, Input, Row, Space, Statistic, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -46,6 +47,8 @@ export function SandboxHistoryPage() {
   const [stats, setStats] = useState<SandboxHistoryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [idInput, setIdInput] = useState('');
+  const [idQuery, setIdQuery] = useState('');
   const [labelQuery, setLabelQuery] = useState('');
   const [page, setPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
@@ -68,8 +71,13 @@ export function SandboxHistoryPage() {
   }, [isAdmin, urlTenant]);
 
   useEffect(() => {
+    const handle = window.setTimeout(() => setIdQuery(idInput.trim().slice(0, 200)), 300);
+    return () => window.clearTimeout(handle);
+  }, [idInput]);
+
+  useEffect(() => {
     setPage(1);
-  }, [tenantFilter, periodFrom, periodTo, labelQuery]);
+  }, [tenantFilter, periodFrom, periodTo, labelQuery, idQuery]);
 
   useEffect(() => {
     void (async () => {
@@ -85,6 +93,7 @@ export function SandboxHistoryPage() {
             pageSize: HISTORY_PAGE_SIZE,
             ...(tenant ? { tenant } : {}),
             ...(labelQuery ? { label: labelQuery } : {}),
+            ...(idQuery ? { sandboxId: idQuery } : {}),
             ...periodQuery,
           }),
           periodActive
@@ -100,7 +109,7 @@ export function SandboxHistoryPage() {
         setLoading(false);
       }
     })();
-  }, [isAdmin, tenantFilter, page, periodFrom, periodTo, periodActive, labelQuery]);
+  }, [isAdmin, tenantFilter, page, periodFrom, periodTo, periodActive, labelQuery, idQuery]);
 
   const dayRange = useMemo((): [Dayjs, Dayjs] | null => {
     if (!periodFrom || !periodTo) return null;
@@ -216,6 +225,14 @@ export function SandboxHistoryPage() {
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap align="center">
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="搜索沙箱 ID"
+            value={idInput}
+            onChange={(e) => setIdInput(e.target.value)}
+            style={{ width: 240 }}
+          />
           {isAdmin && <AdminTenantSelect value={tenantFilter} onChange={syncTenantToUrl} width={220} />}
           <UsagePeriodFilterBar range={dayRange} onRangeChange={onPeriodRangeChange} allowAllTime />
         </Space>

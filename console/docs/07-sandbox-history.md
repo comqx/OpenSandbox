@@ -40,7 +40,7 @@ History, usage, and image stats query **`sandbox_lifecycle_history`** only.
 
 Usage CPU·秒 and 内存·Gi·秒 skip rows that have no create-time `resourceLimits`. Those rows still count toward sandbox count and overlap duration. The API does not fill them with 1 core / 512Mi. `totals.limitsMissing` is how many in-scope rows were skipped for at least one of those two metrics.
 
-`metadata` is the sandbox label map. The Server writes it on lifecycle create and delete. History list accepts `label`: a case-insensitive substring matched against each key, value, or `key=value`. Space-separated terms are AND. Rows created before that Server change have no labels unless `create_request.metadata` was stored by the console.
+`metadata` is the sandbox label map. The Server writes it on lifecycle create and delete. History list accepts `label`: a case-insensitive substring matched against each key, value, or `key=value`. Space-separated terms are AND. Rows created before that Server change have no labels unless `create_request.metadata` was stored by the console. The same list accepts `sandboxId`: a case-insensitive substring of the sandbox id (`%` and `_` are matched literally).
 
 ## API
 

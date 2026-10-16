@@ -558,6 +558,31 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _sandbox_id_needle(query: str | None) -> str | None:
+    if not query:
+        return None
+    text = query.strip()
+    return text or None
+
+
+def _sandbox_id_matches(sandbox_id: str | None, query: str | None) -> bool:
+    """Case-insensitive substring match on sandbox id."""
+    needle = _sandbox_id_needle(query)
+    if not needle:
+        return True
+    return needle.lower() in (sandbox_id or "").lower()
+
+
+def _sandbox_id_where(alias: str, query: str | None) -> tuple[str, list[Any]]:
+    needle = _sandbox_id_needle(query)
+    if not needle:
+        return "", []
+    return (
+        f" AND {alias}.sandbox_id ILIKE %s ESCAPE '\\'",
+        [f"%{_escape_like(needle)}%"],
+    )
+
+
 def _label_where(alias: str, query: str | None) -> tuple[str, list[Any]]:
     """SQL equivalent of _metadata_matches_label, including create_request fallback."""
     terms = _label_terms(query)
@@ -930,6 +955,7 @@ def list_history(
     period_from: datetime | None = None,
     period_to: datetime | None = None,
     label: str | None = None,
+    sandbox_id: str | None = None,
 ) -> dict[str, Any]:
     if _pool is None:
         return {"items": [], "pagination": _empty_page(page, page_size)}
@@ -968,6 +994,12 @@ def list_history(
         if label:
             matched = [
                 r for r in matched if _metadata_matches_label(_metadata_from_row(r), label)
+            ]
+        if sandbox_id:
+            matched = [
+                r
+                for r in matched
+                if _sandbox_id_matches(str(r.get("sandbox_id") or ""), sandbox_id)
             ]
         def _history_sort_key(row: dict[str, Any]) -> datetime:
             start = row.get("lifecycle_created_at") or row.get("first_recorded_at")
@@ -1008,6 +1040,9 @@ def list_history(
     label_sql, label_params = _label_where("h", label)
     where += label_sql
     params.extend(label_params)
+    id_sql, id_params = _sandbox_id_where("h", sandbox_id)
+    where += id_sql
+    params.extend(id_params)
 
     with _pool.connection() as conn:
         total = conn.execute(

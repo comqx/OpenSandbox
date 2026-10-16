@@ -82,6 +82,12 @@ async def list_sandbox_history(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
         )
+    sandbox_id = (request.query_params.get("sandboxId") or "").strip()
+    if len(sandbox_id) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_SANDBOX_ID", "message": "sandboxId query is longer than 200 characters"},
+        )
 
     return await asyncio.to_thread(
         store.list_history,
@@ -93,6 +99,7 @@ async def list_sandbox_history(
         period_from=period_from,
         period_to=period_to,
         label=label or None,
+        sandbox_id=sandbox_id or None,
     )
 
 
