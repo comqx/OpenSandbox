@@ -54,6 +54,7 @@ Requires `BFF_HISTORY_ENABLED` (table `console_sandbox_build_context`). Set `BFF
 | `BFF_IMAGE_BUILD_MAX_FILE_BYTES` | `5242880` | Single file cap |
 | `BFF_IMAGE_BUILD_MAX_TOTAL_BYTES` | `52428800` | Total uncompressed cap |
 | `BFF_IMAGE_BUILD_OSS_*` | empty | Dedicated bucket/prefix (recommended) |
+| `BFF_IMAGE_BUILDER_BASE_URL` | empty | In-cluster image builder root, no path, for example `http://image-builder:8000`. Empty leaves draft editing on and rejects remote submit with `503 IMAGE_BUILDER_NOT_CONFIGURED` |
 
 ### Optional: Grafana sandbox monitor
 

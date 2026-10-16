@@ -27,7 +27,7 @@ Core lifecycle flows go through the **BFF**; optional **server lifecycle audit**
 | Sandbox image list | ✅ | `/api/images/catalog` | `/images/list` |
 | Node image preheat | 🔶 | catalog preheat APIs; needs node list and pod create RBAC | image list action |
 | Mirror accel URLs | ✅ | static UI | `/history/mirror-accel` |
-| Sandbox image build | 🟡 Phase 2a | editor + local tar; PG/OSS drafts when configured; remote build TBD | `/images/sandbox-build` |
+| Sandbox image build | 🔶 | editor + OSS drafts; remote build and live logs when `BFF_IMAGE_BUILDER_BASE_URL` is set. Success inserts the image tag into the catalog | `/images/sandbox-build` |
 
 ## Phase 2 — admin and platform
 

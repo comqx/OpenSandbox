@@ -16,15 +16,34 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import tarfile
 import uuid
 from typing import Any
 
+from psycopg.errors import UniqueViolation
+
 from app.build_context import store as build_store
+from app.build_context.builder_client import (
+    BuilderClient,
+    BuilderConnectionError,
+    BuilderResponseError,
+)
+from app.build_context.image_name import normalize_basic_struct, normalize_image_name
 from app.build_context.oss_client import BuildContextOss, file_object_key, oss_settings, sha256_hex, tar_object_key
 from app.build_context.paths import normalize_relative_path
+from app.build_context.sse import SseTerminalSniffer
 from app.config import Settings
 from app.history.store import history_pool_available
+
+logger = logging.getLogger(__name__)
+
+
+def _byte_limit_label(num_bytes: int) -> str:
+    gib = 1024**3
+    if num_bytes >= gib and num_bytes % gib == 0:
+        return f"{num_bytes // gib}GB"
+    return f"{num_bytes} 字节"
 
 
 class BuildContextError(Exception):
@@ -303,12 +322,23 @@ def delete_file(
     )
 
 
-def build_and_store_tar(
+def pack_context_tar(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for path in sorted(files):
+            data = files[path]
+            info = tarfile.TarInfo(name=path)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def assemble_and_store_tar(
     settings: Settings,
     tenant_id: str,
     context_id: str,
     actor: str,
-) -> dict[str, Any]:
+) -> tuple[bytes, str]:
     _require_enabled(settings)
     existing = build_store.get_context(tenant_id, context_id)
     if existing is None:
@@ -321,18 +351,14 @@ def build_and_store_tar(
         raise BuildContextError("DOCKERFILE_MISSING", f"Missing file: {dockerfile_path}")
 
     oss = BuildContextOss(settings)
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w") as tar:
-        for path in sorted(files_meta.keys()):
-            meta = files_meta[path]
-            if not meta.get("ossKey"):
-                raise BuildContextError("FILE_NOT_UPLOADED", f"File not uploaded: {path}")
-            data = oss.get_bytes(str(meta["ossKey"]))
-            info = tarfile.TarInfo(name=path)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+    files: dict[str, bytes] = {}
+    for path in files_meta:
+        meta = files_meta[path]
+        if not meta.get("ossKey"):
+            raise BuildContextError("FILE_NOT_UPLOADED", f"File not uploaded: {path}")
+        files[path] = oss.get_bytes(str(meta["ossKey"]))
 
-    tar_bytes = buffer.getvalue()
+    tar_bytes = pack_context_tar(files)
     digest = sha256_hex(tar_bytes)
     key = tar_object_key(oss.prefix, tenant_id, context_id)
     oss.put_bytes(
@@ -353,11 +379,193 @@ def build_and_store_tar(
     )
     if updated is None:
         raise BuildContextError("NOT_FOUND", "Build context not found", 404)
+    return tar_bytes, digest
+
+
+def build_and_store_tar(
+    settings: Settings,
+    tenant_id: str,
+    context_id: str,
+    actor: str,
+) -> dict[str, Any]:
+    tar_bytes, digest = assemble_and_store_tar(settings, tenant_id, context_id, actor)
+    stored = build_store.get_context(tenant_id, context_id)
+    if stored is None or not stored.get("tarOssKey"):
+        raise BuildContextError("NOT_FOUND", "Build context not found", 404)
+    oss = BuildContextOss(settings)
     return {
         "tarSha256": digest,
         "tarSizeBytes": len(tar_bytes),
-        "downloadUrl": oss.sign_get_url(key),
+        "downloadUrl": oss.sign_get_url(str(stored["tarOssKey"])),
     }
+
+
+def _require_builder(settings: Settings) -> str:
+    if not is_enabled(settings) or not settings.bff_image_builder_base_url.strip():
+        raise BuildContextError("IMAGE_BUILDER_NOT_CONFIGURED", "构建服务未配置", 503)
+    return settings.bff_image_builder_base_url.strip()
+
+
+def _require_root_dockerfile(existing: dict[str, Any]) -> None:
+    files = (existing.get("manifest") or {}).get("files") or {}
+    if existing.get("dockerfilePath") != "Dockerfile" or "Dockerfile" not in files:
+        raise BuildContextError("IMAGE_BUILD_INVALID", "tar 包根目录缺少 Dockerfile")
+
+
+async def submit_build(
+    settings: Settings,
+    tenant_id: str,
+    context_id: str,
+    body: dict[str, Any],
+    actor: str,
+) -> dict[str, Any]:
+    base_url = _require_builder(settings)
+    image_name = normalize_image_name(body.get("imageName"))
+    basic_struct = normalize_basic_struct(body.get("basicStruct"))
+    existing = build_store.get_context(tenant_id, context_id)
+    if existing is None:
+        raise BuildContextError("NOT_FOUND", "Build context not found", 404)
+    if build_store.find_building_job(tenant_id, context_id) is not None:
+        raise BuildContextError("IMAGE_BUILD_IN_PROGRESS", "已有构建进行中", 409)
+    _require_root_dockerfile(existing)
+    reserved_task_id = uuid.uuid4().hex
+    try:
+        build_store.insert_job(
+            task_id=reserved_task_id,
+            tenant_id=tenant_id,
+            context_id=context_id,
+            image_name=image_name,
+            basic_struct=basic_struct,
+            status="building",
+            message="",
+            tar_sha256="",
+            submitted_by=actor,
+        )
+    except UniqueViolation as exc:
+        raise BuildContextError("IMAGE_BUILD_IN_PROGRESS", "已有构建进行中", 409) from exc
+    try:
+        tar_bytes, digest = assemble_and_store_tar(settings, tenant_id, context_id, actor)
+        limit = settings.bff_image_build_max_total_bytes
+        if len(tar_bytes) > limit:
+            raise BuildContextError("IMAGE_BUILD_INVALID", f"tar 包超过大小限制（{_byte_limit_label(limit)}）")
+        client = BuilderClient(base_url)
+        try:
+            task_id = await client.submit(tar_bytes, image_name, basic_struct)
+        except BuilderResponseError as exc:
+            code = "IMAGE_BUILD_INVALID" if exc.status_code == 400 else "IMAGE_BUILD_UPSTREAM"
+            raise BuildContextError(code, exc.message, exc.status_code) from exc
+        except BuilderConnectionError as exc:
+            raise BuildContextError("IMAGE_BUILD_UPSTREAM", "构建服务不可达", 502) from exc
+    except Exception:
+        build_store.release_building_job(
+            task_id=reserved_task_id,
+            tenant_id=tenant_id,
+            context_id=context_id,
+        )
+        raise
+    assigned = False
+    try:
+        assigned = build_store.assign_builder_task(
+            reserved_task_id=reserved_task_id,
+            task_id=task_id,
+            tar_sha256=digest,
+        )
+    except Exception as exc:
+        build_store.release_building_job(
+            task_id=reserved_task_id,
+            tenant_id=tenant_id,
+            context_id=context_id,
+        )
+        raise BuildContextError("IMAGE_BUILD_UPSTREAM", "构建服务返回异常", 502) from exc
+    if not assigned:
+        build_store.release_building_job(
+            task_id=reserved_task_id,
+            tenant_id=tenant_id,
+            context_id=context_id,
+        )
+        raise BuildContextError("IMAGE_BUILD_UPSTREAM", "构建服务返回异常", 502)
+    return {
+        "taskId": task_id,
+        "contextId": context_id,
+        "imageName": image_name,
+        "basicStruct": basic_struct,
+        "status": "building",
+    }
+
+
+def register_built_image(tenant_id: str, context_id: str, task_id: str, image_name: str) -> None:
+    """Insert the built tag into the sandbox image catalog. A duplicate URI is already listed."""
+    from app.image_catalog import ImageCatalogError, create_image
+
+    image_name = image_name.strip()
+    if not image_name:
+        return
+    context = build_store.get_context(tenant_id, context_id)
+    display = str((context or {}).get("displayName") or "").strip() or image_name
+    job = build_store.get_job(tenant_id, context_id, task_id)
+    actor = str((job or {}).get("submittedBy") or "").strip() or tenant_id or "console"
+    try:
+        create_image(
+            {
+                "displayName": display[:80],
+                "imageUri": image_name,
+                "scenarios": [],
+                "systemPackages": [],
+                "runtimePackages": [],
+                "maintainer": actor[:64],
+            },
+            actor[:64],
+        )
+    except ImageCatalogError as exc:
+        if exc.code != "DUPLICATE_IMAGE":
+            raise
+
+
+def get_build_job(settings: Settings, tenant_id: str, context_id: str, task_id: str) -> dict[str, Any] | None:
+    _require_builder(settings)
+    return build_store.get_job(tenant_id, context_id, task_id)
+
+
+async def iter_build_log(
+    builder: Any,
+    *,
+    tenant_id: str,
+    context_id: str,
+    task_id: str,
+    job_status: str,
+) -> Any:
+    sniffer = SseTerminalSniffer()
+    try:
+        async for chunk in builder.iter_logs(task_id):
+            terminal = None
+            if job_status == "building":
+                sniffer.feed(chunk)
+                if sniffer.terminal is not None:
+                    terminal = sniffer.terminal
+                    job_status = terminal["status"]
+            yield chunk
+            if terminal is None:
+                continue
+            try:
+                if terminal["status"] == "success":
+                    register_built_image(
+                        tenant_id,
+                        context_id,
+                        task_id,
+                        terminal["imageName"],
+                    )
+                build_store.finish_job_if_building(
+                    tenant_id=tenant_id,
+                    context_id=context_id,
+                    task_id=task_id,
+                    status=terminal["status"],
+                    message=terminal["message"],
+                )
+            except Exception:
+                logger.exception("failed to record build result for %s", task_id)
+                return
+    except BuilderConnectionError:
+        return
 
 
 def tar_download_url(settings: Settings, tenant_id: str, context_id: str) -> dict[str, Any]:

@@ -383,6 +383,16 @@ export interface BuildContextManifest {
   files: Record<string, BuildContextManifestFile>;
 }
 
+export interface BuildJob {
+  taskId: string;
+  imageName: string;
+  basicStruct: string;
+  status: 'building' | 'success' | 'failed' | 'cleaned' | string;
+  message: string;
+  createdAt?: string;
+  finishedAt?: string | null;
+}
+
 export interface BuildContextItem {
   id: string;
   tenantId: string;
@@ -395,6 +405,7 @@ export interface BuildContextItem {
   tarOssKey?: string | null;
   tarSha256?: string | null;
   tarSizeBytes?: number | null;
+  latestBuild?: BuildJob | null;
   createdBy?: string;
   updatedBy?: string;
   createdAt?: string;

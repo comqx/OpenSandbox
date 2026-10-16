@@ -28,6 +28,7 @@ import type {
   PreheatStatusResponse,
   BuildContextItem,
   BuildContextListResponse,
+  BuildJob,
   BuildContextFileResponse,
   SandboxMonitorResponse,
   PoolListResponse,
@@ -395,6 +396,15 @@ export const buildContextApi = {
     apiRequest<void>(
       `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
       { method: 'DELETE' },
+    ),
+  submitBuild: (
+    id: string,
+    body: { imageName: string; basicStruct: '1' | '2' },
+    tenant?: string,
+  ) =>
+    apiRequest<BuildJob & { contextId: string }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/builds${tenantQueryParam(tenant)}`,
+      { method: 'POST', body: JSON.stringify(body) },
     ),
 };
 

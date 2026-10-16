@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.history import store as history_store
@@ -24,7 +24,7 @@ from app.history import store as history_store
 def _iso_timestamp(value: Any) -> str | None:
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=datetime.now().astimezone().tzinfo).isoformat()
+            return value.replace(tzinfo=timezone.utc).isoformat()
         return value.isoformat()
     return None
 
@@ -70,7 +70,9 @@ def list_contexts(tenant_id: str) -> list[dict[str, Any]]:
             """,
             (tenant_id,),
         ).fetchall()
-    return [_row_api(row) for row in rows]
+    items = [_row_api(row) for row in rows]
+    _attach_latest_builds(tenant_id, items)
+    return items
 
 
 def get_context(tenant_id: str, context_id: str) -> dict[str, Any] | None:
@@ -87,7 +89,9 @@ def get_context(tenant_id: str, context_id: str) -> dict[str, Any] | None:
         ).fetchone()
     if row is None:
         return None
-    return _row_api(row)
+    item = _row_api(row)
+    _attach_latest_builds(tenant_id, [item])
+    return item
 
 
 def insert_context(row: dict[str, Any]) -> dict[str, Any]:
@@ -175,11 +179,186 @@ def update_context(
     return _row_api(saved)
 
 
+def _job_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "taskId": row["task_id"],
+        "imageName": row["image_name"],
+        "basicStruct": row["basic_struct"],
+        "status": row["status"],
+        "message": row.get("message") or "",
+        "submittedBy": row.get("submitted_by") or "",
+        "createdAt": _iso_timestamp(row.get("created_at")),
+        "finishedAt": _iso_timestamp(row.get("finished_at")),
+    }
+
+
+def _attach_latest_builds(tenant_id: str, items: list[dict[str, Any]]) -> None:
+    if not items:
+        return
+    jobs = latest_jobs(tenant_id, [str(item["id"]) for item in items])
+    for item in items:
+        item["latestBuild"] = jobs.get(str(item["id"]))
+
+
+def latest_jobs(tenant_id: str, context_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not context_ids:
+        return {}
+    pool = history_store._pool
+    if pool is None:
+        return {}
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT ON (context_id) *
+            FROM console_sandbox_build_job
+            WHERE tenant_id = %s AND context_id = ANY(%s)
+            ORDER BY context_id, created_at DESC
+            """,
+            (tenant_id, context_ids),
+        ).fetchall()
+    return {str(row["context_id"]): _job_api(row) for row in rows}
+
+
+def find_building_job(tenant_id: str, context_id: str) -> dict[str, Any] | None:
+    pool = history_store._pool
+    if pool is None:
+        return None
+    with pool.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM console_sandbox_build_job
+            WHERE tenant_id = %s AND context_id = %s AND status = 'building'
+            LIMIT 1
+            """,
+            (tenant_id, context_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return _job_api(row)
+
+
+def insert_job(
+    *,
+    task_id: str,
+    tenant_id: str,
+    context_id: str,
+    image_name: str,
+    basic_struct: str,
+    status: str,
+    message: str,
+    tar_sha256: str,
+    submitted_by: str,
+) -> dict[str, Any]:
+    pool = history_store._pool
+    if pool is None:
+        raise RuntimeError("History pool not initialized")
+    with pool.connection() as conn:
+        saved = conn.execute(
+            """
+            INSERT INTO console_sandbox_build_job (
+                task_id, tenant_id, context_id, image_name, basic_struct,
+                status, message, tar_sha256, submitted_by
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                task_id,
+                tenant_id,
+                context_id,
+                image_name,
+                basic_struct,
+                status,
+                message,
+                tar_sha256,
+                submitted_by,
+            ),
+        ).fetchone()
+    return _job_api(saved)
+
+
+def assign_builder_task(*, reserved_task_id: str, task_id: str, tar_sha256: str) -> bool:
+    pool = history_store._pool
+    if pool is None:
+        raise RuntimeError("History pool not initialized")
+    with pool.connection() as conn:
+        updated = conn.execute(
+            """
+            UPDATE console_sandbox_build_job
+            SET task_id = %s, tar_sha256 = %s
+            WHERE task_id = %s AND status = 'building'
+            """,
+            (task_id, tar_sha256, reserved_task_id),
+        )
+    return updated.rowcount > 0
+
+
+def release_building_job(*, task_id: str, tenant_id: str, context_id: str) -> None:
+    pool = history_store._pool
+    if pool is None:
+        return
+    with pool.connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM console_sandbox_build_job
+            WHERE task_id = %s AND tenant_id = %s AND context_id = %s AND status = 'building'
+            """,
+            (task_id, tenant_id, context_id),
+        )
+
+
+def get_job(tenant_id: str, context_id: str, task_id: str) -> dict[str, Any] | None:
+    pool = history_store._pool
+    if pool is None:
+        return None
+    with pool.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM console_sandbox_build_job
+            WHERE tenant_id = %s AND context_id = %s AND task_id = %s
+            """,
+            (tenant_id, context_id, task_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return _job_api(row)
+
+
+def finish_job_if_building(
+    *,
+    tenant_id: str,
+    context_id: str,
+    task_id: str,
+    status: str,
+    message: str,
+) -> bool:
+    pool = history_store._pool
+    if pool is None:
+        return False
+    with pool.connection() as conn:
+        updated = conn.execute(
+            """
+            UPDATE console_sandbox_build_job
+            SET status = %s, message = %s, finished_at = NOW()
+            WHERE tenant_id = %s AND context_id = %s AND task_id = %s AND status = 'building'
+            """,
+            (status, message, tenant_id, context_id, task_id),
+        )
+    return updated.rowcount > 0
+
+
 def delete_context(tenant_id: str, context_id: str) -> bool:
     pool = history_store._pool
     if pool is None:
         raise RuntimeError("History pool not initialized")
     with pool.connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM console_sandbox_build_job
+            WHERE tenant_id = %s AND context_id = %s
+            """,
+            (tenant_id, context_id),
+        )
         deleted = conn.execute(
             """
             DELETE FROM console_sandbox_build_context

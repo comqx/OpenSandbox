@@ -16,8 +16,8 @@ export const BUILD_CONTEXT_VERSION = 1 as const;
 
 export const BUILD_CONTEXT_LIMITS = {
   maxFiles: 256,
-  maxFileBytes: 5 * 1024 * 1024,
-  maxTotalBytes: 50 * 1024 * 1024,
+  maxFileBytes: 10 * 1024 * 1024 * 1024,
+  maxTotalBytes: 10 * 1024 * 1024 * 1024,
 } as const;
 
 export const DEFAULT_DOCKERFILE_PATH = 'Dockerfile';

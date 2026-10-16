@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from app.build_context import service as build_service
+from app.build_context.builder_client import BuilderClient
 from app.build_context.service import BuildContextError
 from app.config import get_settings
 from app.deps import get_session_payload
@@ -182,6 +184,62 @@ async def get_build_context_tar(
         return build_service.tar_download_url(settings, tenant_id, context_id)
     except BuildContextError as exc:
         raise _error(exc) from exc
+
+
+@router.post("/{context_id}/builds")
+async def post_build(
+    context_id: str,
+    body: dict[str, Any],
+    payload: dict = Depends(get_session_payload),
+    tenant: str | None = Query(default=None),
+) -> dict[str, Any]:
+    settings = get_settings()
+    tenant_id = _tenant_scope(payload, tenant)
+    try:
+        return await build_service.submit_build(
+            settings,
+            tenant_id,
+            context_id,
+            body,
+            actor_label(payload),
+        )
+    except BuildContextError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/{context_id}/builds/{task_id}/logs")
+async def get_build_logs(
+    context_id: str,
+    task_id: str,
+    payload: dict = Depends(get_session_payload),
+    tenant: str | None = Query(default=None),
+) -> StreamingResponse:
+    settings = get_settings()
+    tenant_id = _tenant_scope(payload, tenant)
+    try:
+        job = build_service.get_build_job(settings, tenant_id, context_id, task_id)
+    except BuildContextError as exc:
+        raise _error(exc) from exc
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": "Build job not found"},
+        )
+    client = BuilderClient(settings.bff_image_builder_base_url)
+    return StreamingResponse(
+        build_service.iter_build_log(
+            client,
+            tenant_id=tenant_id,
+            context_id=context_id,
+            task_id=task_id,
+            job_status=str(job.get("status") or ""),
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.delete("/{context_id}", status_code=status.HTTP_204_NO_CONTENT)

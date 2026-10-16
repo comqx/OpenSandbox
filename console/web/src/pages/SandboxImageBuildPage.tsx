@@ -31,7 +31,9 @@ import {
   Col,
   Dropdown,
   Input,
+  Drawer,
   Modal,
+  Radio,
   Row,
   Space,
   Table,
@@ -44,8 +46,8 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { buildContextApi } from '../api/client';
-import type { BuildContextItem } from '../api/types';
+import { ApiError, buildContextApi } from '../api/client';
+import type { BuildContextItem, BuildJob } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AdminTenantSelect } from '../components/AdminTenantSelect';
 import { BuildContextFileEditor } from '../components/BuildContextFileEditor';
@@ -63,6 +65,13 @@ import {
   validateBuildContext,
 } from '../utils/buildContextModel';
 import { packBuildContextTar } from '../utils/buildContextTar';
+import { parseBuildLogData, type BuildLogEntry } from '../utils/buildImageLog';
+import {
+  BUILD_IMAGE_PREFIX,
+  buildImageNameError,
+  composeBuildImageName,
+  imageSuffixFromInput,
+} from '../utils/buildImageName';
 import { listBuildContextDirectories } from '../utils/buildContextTree';
 
 const CLOUD_SYNC_DEBOUNCE_MS = 900;
@@ -84,6 +93,40 @@ function downloadBlob(blob: Blob, filename: string) {
 
 function fileCount(item: BuildContextItem): number {
   return Object.keys(item.manifest?.files ?? {}).length;
+}
+
+function buildLogsUrl(contextId: string, taskId: string, tenant?: string): string {
+  const query = tenant ? `?tenant=${encodeURIComponent(tenant)}` : '';
+  return `/api/images/build-contexts/${encodeURIComponent(contextId)}/builds/${encodeURIComponent(taskId)}/logs${query}`;
+}
+
+function buildStatusTag(job?: BuildJob | null) {
+  if (!job) {
+    return null;
+  }
+  const label =
+    job.status === 'building'
+      ? '构建中'
+      : job.status === 'success'
+        ? '构建成功'
+        : job.status === 'failed'
+          ? '构建失败'
+          : job.status === 'cleaned'
+            ? '日志已清理'
+            : job.status;
+  const color =
+    job.status === 'success' ? 'green' : job.status === 'failed' ? 'red' : job.status === 'cleaned' ? 'orange' : 'processing';
+  return <Tag color={color}>{label}</Tag>;
+}
+
+function buildResultText(result: Extract<BuildLogEntry, { kind: 'result' }>): string {
+  if (result.status === 'success') {
+    return '构建成功。镜像已写入沙箱镜像列表，地址是本次提交的镜像 tag。';
+  }
+  if (result.status === 'cleaned') {
+    return result.message || '构建日志已清理';
+  }
+  return result.message || '构建失败';
 }
 
 export function SandboxImageBuildPage() {
@@ -109,8 +152,20 @@ export function SandboxImageBuildPage() {
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [lastCloudSyncAt, setLastCloudSyncAt] = useState<string | null>(null);
+  const [buildOpen, setBuildOpen] = useState(false);
+  const [buildContextId, setBuildContextId] = useState<string | null>(null);
+  const [buildImageSuffix, setBuildImageSuffix] = useState('');
+  const [buildArch, setBuildArch] = useState<'1' | '2'>('1');
+  const [buildSubmitting, setBuildSubmitting] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [logResult, setLogResult] = useState<Extract<BuildLogEntry, { kind: 'result' }> | null>(null);
 
   const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const logSourceRef = useRef<EventSource | null>(null);
+  const buildWatchersRef = useRef<Map<string, EventSource>>(new Map());
+  const settledBuildsRef = useRef<Set<string>>(new Set());
+  const logViewRef = useRef<HTMLPreElement | null>(null);
   const folderUploadToastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const folderUploadCountRef = useRef(0);
   const filesRef = useRef(files);
@@ -159,9 +214,54 @@ export function SandboxImageBuildPage() {
       if (folderUploadToastRef.current) {
         clearTimeout(folderUploadToastRef.current);
       }
+      logSourceRef.current?.close();
+      for (const source of buildWatchersRef.current.values()) {
+        source.close();
+      }
+      buildWatchersRef.current.clear();
     },
     [],
   );
+
+  useEffect(() => {
+    const active = new Set<string>();
+    for (const draft of cloudDrafts) {
+      const job = draft.latestBuild;
+      if (job?.status !== 'building') {
+        continue;
+      }
+      const key = `${draft.id}:${job.taskId}`;
+      active.add(key);
+      if (settledBuildsRef.current.has(key) || buildWatchersRef.current.has(key)) {
+        continue;
+      }
+      const source = new EventSource(buildLogsUrl(draft.id, job.taskId, tenantScope));
+      source.onmessage = (event) => {
+        const parsed = parseBuildLogData(event.data);
+        if (parsed?.kind !== 'result') {
+          return;
+        }
+        settledBuildsRef.current.add(key);
+        source.close();
+        buildWatchersRef.current.delete(key);
+        void refreshCloudDrafts();
+      };
+      buildWatchersRef.current.set(key, source);
+    }
+    for (const [key, source] of buildWatchersRef.current) {
+      if (!active.has(key)) {
+        source.close();
+        buildWatchersRef.current.delete(key);
+      }
+    }
+  }, [cloudDrafts, refreshCloudDrafts, tenantScope]);
+
+  useEffect(() => {
+    const view = logViewRef.current;
+    if (view) {
+      view.scrollTop = view.scrollHeight;
+    }
+  }, [logLines, logResult]);
 
   const ensureDraftContext = useCallback(async (): Promise<string | null> => {
     if (!cloudActive) {
@@ -607,6 +707,118 @@ export function SandboxImageBuildPage() {
     }
   };
 
+  const closeBuildLogs = useCallback(() => {
+    logSourceRef.current?.close();
+    logSourceRef.current = null;
+  }, []);
+
+  const openBuildLogs = useCallback(
+    (contextId: string, taskId: string) => {
+      closeBuildLogs();
+      setLogLines([]);
+      setLogResult(null);
+      setLogOpen(true);
+      const source = new EventSource(buildLogsUrl(contextId, taskId, tenantScope));
+      logSourceRef.current = source;
+      source.onopen = () => {
+        setLogLines([]);
+        setLogResult(null);
+      };
+      source.addEventListener('log', (event) => {
+        const parsed = parseBuildLogData((event as MessageEvent<string>).data);
+        if (parsed?.kind === 'log') {
+          setLogLines((prev) => [...prev, parsed.line]);
+        }
+      });
+      source.onmessage = (event) => {
+        const parsed = parseBuildLogData(event.data);
+        if (parsed?.kind !== 'result') {
+          return;
+        }
+        setLogResult(parsed);
+        source.close();
+        if (logSourceRef.current === source) {
+          logSourceRef.current = null;
+        }
+        void refreshCloudDrafts();
+      };
+    },
+    [closeBuildLogs, refreshCloudDrafts, tenantScope],
+  );
+
+  const openBuildForm = (contextId: string | null) => {
+    setBuildContextId(contextId);
+    setBuildImageSuffix('');
+    setBuildArch('1');
+    setBuildOpen(true);
+  };
+
+  const handleBuildClick = (contextId: string | null, contextDockerfile: string, latest?: BuildJob | null) => {
+    if (!cloudActive) {
+      message.warning('云端草稿未配置，无法提交构建。');
+      return;
+    }
+    if (latest?.status === 'building') {
+      if (!contextId) {
+        return;
+      }
+      openBuildLogs(contextId, latest.taskId);
+      return;
+    }
+    if (contextDockerfile !== DEFAULT_DOCKERFILE_PATH) {
+      message.error('tar 包根目录缺少 Dockerfile');
+      return;
+    }
+    openBuildForm(contextId);
+  };
+
+  const confirmBuild = async () => {
+    const nameError = buildImageNameError(buildImageSuffix);
+    if (nameError) {
+      message.error(nameError);
+      return;
+    }
+    const imageName = composeBuildImageName(buildImageSuffix);
+    setBuildSubmitting(true);
+    try {
+      let contextId = buildContextId;
+      const editingCurrent = !contextId || contextId === draftIdRef.current;
+      if (editingCurrent) {
+        if (dockerfilePath !== DEFAULT_DOCKERFILE_PATH) {
+          message.error('tar 包根目录缺少 Dockerfile');
+          return;
+        }
+        contextId = await syncAllFilesToOss();
+      }
+      if (!contextId) {
+        throw new Error('草稿未创建');
+      }
+      const job = await buildContextApi.submitBuild(
+        contextId,
+        { imageName, basicStruct: buildArch },
+        tenantScope,
+      );
+      setBuildOpen(false);
+      openBuildLogs(contextId, job.taskId);
+      void refreshCloudDrafts();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'IMAGE_BUILD_IN_PROGRESS') {
+        setBuildOpen(false);
+        const data = await buildContextApi.list(tenantScope);
+        setCloudPersisted(Boolean(data.persisted));
+        setCloudDrafts(data.items ?? []);
+        const row = (data.items ?? []).find((item) => item.id === (buildContextId ?? draftIdRef.current));
+        if (row?.latestBuild?.status === 'building') {
+          openBuildLogs(row.id, row.latestBuild.taskId);
+          return;
+        }
+      }
+      message.error(err instanceof Error ? err.message : '提交构建失败');
+    } finally {
+      setBuildSubmitting(false);
+    }
+  };
+
   const handleNewDraft = () => {
     setDraftId(null);
     setDisplayName('我的沙箱镜像草稿');
@@ -623,6 +835,12 @@ export function SandboxImageBuildPage() {
       dataIndex: 'displayName',
       key: 'displayName',
       ellipsis: true,
+      render: (name: string, row: BuildContextItem) => (
+        <Space size={4} wrap>
+          <span>{name}</span>
+          {buildStatusTag(row.latestBuild)}
+        </Space>
+      ),
     },
     {
       title: '状态',
@@ -678,11 +896,14 @@ export function SandboxImageBuildPage() {
           >
             下载 tar
           </Button>
-          <Tooltip title="远程集群构建与镜像入库（Phase 2b）">
-            <Button type="link" size="small" disabled>
-              构建镜像
-            </Button>
-          </Tooltip>
+          <Button
+            type="link"
+            size="small"
+            disabled={!cloudActive || (row.latestBuild?.status !== 'building' && row.dockerfilePath !== 'Dockerfile')}
+            onClick={() => handleBuildClick(row.id, row.dockerfilePath, row.latestBuild)}
+          >
+            {row.latestBuild?.status === 'building' ? '查看日志' : '构建镜像'}
+          </Button>
           <Button type="link" size="small" danger onClick={() => void handleDeleteDraft(row.id)}>
             删除
           </Button>
@@ -921,8 +1142,26 @@ export function SandboxImageBuildPage() {
           </Card>
           <Card size="small" style={{ marginTop: 16 }} title="操作">
             <Space wrap size="middle" align="center">
-              <Tooltip title="远程集群构建与镜像入库（Phase 2b）">
-                <Button disabled>构建镜像（待开发）</Button>
+              <Tooltip title={dockerfilePath === DEFAULT_DOCKERFILE_PATH ? '提交到构建服务，并在下方查看实时日志' : 'tar 包根目录缺少 Dockerfile'}>
+                <Button
+                  disabled={
+                    !cloudActive ||
+                    (cloudDrafts.find((item) => item.id === draftId)?.latestBuild?.status !== 'building' &&
+                      (!validation.ok || dockerfilePath !== DEFAULT_DOCKERFILE_PATH))
+                  }
+                  loading={buildSubmitting}
+                  onClick={() =>
+                    handleBuildClick(
+                      draftId,
+                      dockerfilePath,
+                      cloudDrafts.find((item) => item.id === draftId)?.latestBuild,
+                    )
+                  }
+                >
+                  {cloudDrafts.find((item) => item.id === draftId)?.latestBuild?.status === 'building'
+                    ? '查看日志'
+                    : '构建镜像'}
+                </Button>
               </Tooltip>
               <Button
                 icon={<DownloadOutlined />}
@@ -955,8 +1194,8 @@ export function SandboxImageBuildPage() {
         type="info"
         showIcon
         style={{ marginTop: 24 }}
-        message="后续步骤（规划中）"
-        description="远程集群构建、构建日志、写入沙箱镜像列表与 SDK 引用将在 Phase 2b 对接构建服务。"
+        message="构建结果"
+        description="构建成功后，镜像 tag 会写入沙箱镜像列表。列表里已有同一地址时不会重复添加。"
       />
 
       <Modal
@@ -1027,6 +1266,76 @@ export function SandboxImageBuildPage() {
           </div>
         </Space>
       </Modal>
+
+      <Modal
+        title="构建镜像"
+        open={buildOpen}
+        onOk={() => void confirmBuild()}
+        onCancel={() => setBuildOpen(false)}
+        okText="开始构建"
+        confirmLoading={buildSubmitting}
+        destroyOnClose
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div>
+            <Typography.Text>镜像地址</Typography.Text>
+            <Input
+              addonBefore={BUILD_IMAGE_PREFIX}
+              value={buildImageSuffix}
+              onChange={(event) => setBuildImageSuffix(imageSuffixFromInput(event.target.value))}
+              placeholder="app:1.0"
+              maxLength={255}
+            />
+          </div>
+          <div>
+            <Typography.Text>架构</Typography.Text>
+            <Radio.Group
+              value={buildArch}
+              onChange={(event) => setBuildArch(event.target.value as '1' | '2')}
+            >
+              <Radio value="1">amd64</Radio>
+              <Radio value="2">arm64</Radio>
+            </Radio.Group>
+          </div>
+        </Space>
+      </Modal>
+
+      <Drawer
+        title="构建日志"
+        open={logOpen}
+        width={720}
+        onClose={() => {
+          closeBuildLogs();
+          setLogOpen(false);
+        }}
+      >
+        {logResult ? (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type={logResult.status === 'success' ? 'success' : logResult.status === 'cleaned' ? 'warning' : 'error'}
+            showIcon
+            message={buildResultText(logResult)}
+          />
+        ) : (
+          <Alert style={{ marginBottom: 12 }} type="info" showIcon message="构建进行中。关闭页面不会取消构建。" />
+        )}
+        <pre
+          ref={logViewRef}
+          style={{
+            margin: 0,
+            maxHeight: 480,
+            overflow: 'auto',
+            padding: 12,
+            background: '#0f1419',
+            color: '#d6deeb',
+            fontSize: 12,
+            lineHeight: 1.5,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {logLines.join('\n')}
+        </pre>
+      </Drawer>
     </div>
   );
 }

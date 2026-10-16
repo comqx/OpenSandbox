@@ -93,6 +93,8 @@ class Settings(BaseSettings):
     bff_image_build_oss_key_prefix: str = "console/image-build"
     bff_image_build_oss_access_key_id: str = ""
     bff_image_build_oss_access_key_secret: str = ""
+    # In-cluster image builder. Empty disables remote build submission.
+    bff_image_builder_base_url: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

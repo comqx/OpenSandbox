@@ -148,9 +148,15 @@ Requires `BFF_HISTORY_ENABLED`, `BFF_IMAGE_BUILD_ENABLED=true`, and OSS credenti
 | GET/PATCH | `/api/images/build-contexts/{id}` | metadata + manifest (no inline file bodies) |
 | PUT/GET/DELETE | `/api/images/build-contexts/{id}/files/{path}` | `encoding` + `content` (utf-8 or base64) |
 | POST/GET | `/api/images/build-contexts/{id}/tar` | build or presign `context.tar` on OSS |
+| POST | `/api/images/build-contexts/{id}/builds` | `{ imageName, basicStruct }` where `basicStruct` is `"1"` (amd64) or `"2"` (arm64). Packs the OSS files into an uncompressed tar and submits it to `BFF_IMAGE_BUILDER_BASE_URL`. Returns `{ taskId, contextId, imageName, basicStruct, status: "building" }` |
+| GET | `/api/images/build-contexts/{id}/builds/{taskId}/logs` | `text/event-stream`. Replays builder logs. The last event without an `event` name is the result (`success`, `failed`, or `cleaned`) |
 | DELETE | `/api/images/build-contexts/{id}` | remove draft row and OSS objects |
 
-Returns `503 IMAGE_BUILD_NOT_CONFIGURED` when the feature gate or storage is unavailable.
+List and detail items include `latestBuild` (`null` when the draft has no job). A context can have only one `building` job; a second submit returns `409 IMAGE_BUILD_IN_PROGRESS`.
+
+Returns `503 IMAGE_BUILD_NOT_CONFIGURED` when the feature gate or storage is unavailable. Submit returns `503 IMAGE_BUILDER_NOT_CONFIGURED` when storage or `BFF_IMAGE_BUILDER_BASE_URL` is missing.
+
+When the log stream reports `success`, the BFF inserts `imageName` into `console_sandbox_image_catalog` (display name from the draft, truncated to 80 characters). An existing URI is left as-is. The image is still not pushed by this API. The console ingress should allow at least 3600s read time for the log stream and must not buffer `text/event-stream`.
 
 ## Health
 

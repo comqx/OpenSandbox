@@ -217,6 +217,36 @@ def _ensure_schema(pool: ConnectionPool) -> None:
                 ON console_sandbox_build_context (tenant_id, status)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS console_sandbox_build_job (
+                task_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                context_id TEXT NOT NULL,
+                image_name TEXT NOT NULL,
+                basic_struct TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                tar_sha256 TEXT NOT NULL DEFAULT '',
+                submitted_by TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                finished_at TIMESTAMPTZ
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_console_sandbox_build_job_context_created
+                ON console_sandbox_build_job (context_id, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_console_sandbox_build_job_active
+                ON console_sandbox_build_job (context_id)
+                WHERE status = 'building'
+            """
+        )
 
 
 def history_pool_available() -> bool:
