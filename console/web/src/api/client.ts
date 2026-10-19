@@ -477,6 +477,15 @@ export const historyApi = {
       `/api/history/sandboxes${qs ? `?${qs}` : ''}`,
     );
   },
+  createdSeries: (query: { from: string; to: string; bucket: 'day' | 'month'; tenant?: string }) => {
+    const params = new URLSearchParams({
+      from: query.from,
+      to: query.to,
+      bucket: query.bucket,
+    });
+    if (query.tenant) params.set('tenant', query.tenant);
+    return apiRequest<import('./types').CreatedSeriesResponse>(`/api/history/created-series?${params}`);
+  },
   stats: (query?: { tenant?: string; from?: string; to?: string }) => {
     const params = new URLSearchParams();
     if (query?.tenant) params.set('tenant', query.tenant);

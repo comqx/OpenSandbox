@@ -181,6 +181,53 @@ async def history_statistics(
     )
 
 
+@router.get("/created-series")
+async def created_series(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    period_from = _parse_period_param(request.query_params.get("from"), "from")
+    period_to = _parse_period_param(request.query_params.get("to"), "to")
+    if period_from >= period_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+        )
+    bucket = (request.query_params.get("bucket") or "day").strip().lower()
+    try:
+        bucket = store._validate_created_bucket(bucket, period_from, period_to)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_BUCKET", "message": str(exc)},
+        ) from exc
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    return await asyncio.to_thread(
+        store.created_series,
+        settings,
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+        bucket=bucket,
+    )
+
+
 @router.get("/images/stats")
 async def image_statistics(
     request: Request,

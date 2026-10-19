@@ -36,6 +36,8 @@ BFF runs `CREATE TABLE IF NOT EXISTS` for `sandbox_lifecycle_history`, `console_
 
 History, usage, and image stats query **`sandbox_lifecycle_history`** only.
 
+`GET /api/history/created-series` requires `from` and `to` (UTC, `to` exclusive) and `bucket=day|month`. It counts rows by `COALESCE(lifecycle_created_at, first_recorded_at)` falling in each UTC bucket. The response is `points`, `series[]` (`tenant`, `counts` aligned to `points`), and `totals`. A day bucket longer than 120 days is rejected. A window longer than 36 buckets drops leading empty buckets so all-time monthly charts start at the first creation. This is create-time trend, separate from overlap duration on `/history/stats`.
+
 `GET /api/history/stats` accepts optional `from` and `to` (UTC, `to` exclusive). With both, counts and durations include only rows whose lifetime overlaps `[from, to)`, and duration is clipped to that window. Without them, totals use stored `wall_clock_seconds` for the whole history. The overview always sends a window, including a wide one for 历史累计, so its duration stays on the overlap formula. The response includes `tenants[]` (`tenant`, `totalRecords`, `activeRecords`, `totalWallClockSeconds`, `avgWallClockSeconds`). `activeRecords` is still “not ended now”, among the rows in scope.
 
 Usage CPU·秒 and 内存·Gi·秒 skip rows that have no create-time `resourceLimits`. Those rows still count toward sandbox count and overlap duration. The API does not fill them with 1 core / 512Mi. `totals.limitsMissing` is how many in-scope rows were skipped for at least one of those two metrics.

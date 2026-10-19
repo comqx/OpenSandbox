@@ -1154,6 +1154,155 @@ def _aggregate_period_history_stats(
     }
 
 
+_CREATED_SERIES_TRIM_AFTER = 36
+_CREATED_DAY_SPAN_LIMIT = timedelta(days=120)
+
+
+def _series_created_at(row: dict[str, Any]) -> datetime | None:
+    raw = row.get("created_at")
+    if raw is None:
+        raw = row.get("lifecycle_created_at")
+    if raw is None:
+        raw = row.get("first_recorded_at")
+    if not isinstance(raw, datetime):
+        return None
+    if raw.tzinfo is None:
+        raw = raw.replace(tzinfo=timezone.utc)
+    return raw.astimezone(timezone.utc)
+
+
+def _validate_created_bucket(bucket: str, period_from: datetime, period_to: datetime) -> str:
+    kind = bucket.strip().lower()
+    if kind not in ("day", "month"):
+        raise ValueError("bucket must be day or month")
+    start = period_from if period_from.tzinfo else period_from.replace(tzinfo=timezone.utc)
+    end = period_to if period_to.tzinfo else period_to.replace(tzinfo=timezone.utc)
+    if kind == "day" and end - start > _CREATED_DAY_SPAN_LIMIT:
+        raise ValueError("day bucket supports at most 120 days")
+    return kind
+
+
+def _created_bucket_starts(period_from: datetime, period_to: datetime, bucket: str) -> list[datetime]:
+    start = period_from.astimezone(timezone.utc)
+    end = period_to.astimezone(timezone.utc)
+    if bucket == "month":
+        cursor = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        cursor = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    points: list[datetime] = []
+    while cursor < end:
+        points.append(cursor)
+        if bucket == "month":
+            year = cursor.year + (1 if cursor.month == 12 else 0)
+            month = 1 if cursor.month == 12 else cursor.month + 1
+            cursor = cursor.replace(year=year, month=month)
+        else:
+            cursor = cursor + timedelta(days=1)
+    return points
+
+
+def _aggregate_created_series(
+    rows: list[dict[str, Any]],
+    *,
+    period_from: datetime,
+    period_to: datetime,
+    bucket: str,
+) -> dict[str, Any]:
+    """Count sandboxes by UTC create time. `period_to` is exclusive."""
+    bucket = _validate_created_bucket(bucket, period_from, period_to)
+    period_from = period_from.astimezone(timezone.utc)
+    period_to = period_to.astimezone(timezone.utc)
+    starts = _created_bucket_starts(period_from, period_to, bucket)
+    labels = [start.strftime("%Y-%m" if bucket == "month" else "%Y-%m-%d") for start in starts]
+    index = {label: i for i, label in enumerate(labels)}
+    by_tenant: dict[str, list[int]] = {}
+    for row in rows:
+        created = _series_created_at(row)
+        if created is None or created < period_from or created >= period_to:
+            continue
+        label = created.strftime("%Y-%m" if bucket == "month" else "%Y-%m-%d")
+        slot = index.get(label)
+        if slot is None:
+            continue
+        tenant = str(row.get("tenant_name") or "")
+        counts = by_tenant.get(tenant)
+        if counts is None:
+            counts = [0] * len(labels)
+            by_tenant[tenant] = counts
+        counts[slot] += 1
+
+    if len(labels) > _CREATED_SERIES_TRIM_AFTER:
+        first = 0
+        while first < len(labels) and all(counts[first] == 0 for counts in by_tenant.values()):
+            first += 1
+        if first:
+            labels = labels[first:]
+            for tenant, counts in by_tenant.items():
+                by_tenant[tenant] = counts[first:]
+
+    series = [{"tenant": name, "counts": counts} for name, counts in by_tenant.items()]
+    series.sort(key=lambda item: (-sum(item["counts"]), str(item["tenant"])))
+    totals = [0] * len(labels)
+    for item in series:
+        for i, count in enumerate(item["counts"]):
+            totals[i] += int(count)
+    return {"points": labels, "series": series, "totals": totals}
+
+
+def created_series(
+    settings: Settings,
+    *,
+    tenant_name: str | None,
+    period_from: datetime,
+    period_to: datetime,
+    bucket: str,
+) -> dict[str, Any]:
+    """Sandbox create counts in [period_from, period_to), bucketed by UTC day or month."""
+    if _pool is None:
+        return {"enabled": False}
+    period_from = period_from.astimezone(timezone.utc)
+    period_to = period_to.astimezone(timezone.utc)
+    if period_to <= period_from:
+        raise ValueError("period to must be after from")
+    bucket = _validate_created_bucket(bucket, period_from, period_to)
+    where = (
+        "WHERE COALESCE(lifecycle_created_at, first_recorded_at) >= %s "
+        "AND COALESCE(lifecycle_created_at, first_recorded_at) < %s"
+    )
+    params: list[Any] = [period_from, period_to]
+    if tenant_name:
+        where += " AND tenant_name = %s"
+        params.append(tenant_name)
+    with _pool.connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                tenant_name,
+                COALESCE(lifecycle_created_at, first_recorded_at) AS created_at
+            FROM sandbox_lifecycle_history
+            {where}
+            """,
+            params,
+        ).fetchall()
+    aggregated = _aggregate_created_series(
+        list(rows),
+        period_from=period_from,
+        period_to=period_to,
+        bucket=bucket,
+    )
+    now = datetime.now(timezone.utc)
+    return {
+        "enabled": True,
+        "asOf": now.isoformat().replace("+00:00", "Z"),
+        "bucket": bucket,
+        "period": {
+            "from": period_from.isoformat().replace("+00:00", "Z"),
+            "to": period_to.isoformat().replace("+00:00", "Z"),
+        },
+        **aggregated,
+    }
+
+
 def history_stats(
     settings: Settings,
     *,

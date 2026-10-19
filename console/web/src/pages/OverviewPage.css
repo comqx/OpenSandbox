@@ -88,8 +88,7 @@ limitations under the License.
   margin: -4px 0 8px !important;
 }
 
-.overview-block .overview-kpi-grid,
-.overview-block .overview-history-grid {
+.overview-block .overview-kpi-grid {
   margin-bottom: 16px;
 }
 
@@ -368,27 +367,9 @@ limitations under the License.
   color: #1677ff;
 }
 
-.overview-history-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-top: 12px;
-  margin-bottom: 24px;
-}
-
-@media (max-width: 768px) {
-  .overview-history-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.overview-history-card {
-  border-radius: var(--overview-card-radius);
-  border: 1px solid var(--overview-border);
-}
-
-.overview-history-card .ant-card-body {
-  padding: 16px;
+.overview-trend-chart {
+  height: 340px;
+  margin-bottom: 8px;
 }
 
 .overview-tenant-card {

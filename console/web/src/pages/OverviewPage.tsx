@@ -18,9 +18,9 @@ import {
   Card,
   Empty,
   Progress,
+  Segmented,
   Space,
   Spin,
-  Statistic,
   Table,
   Typography,
 } from 'antd';
@@ -38,11 +38,18 @@ import { Link } from 'react-router-dom';
 
 import { adminApi, ApiError, historyApi, sandboxApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { CreatedTrendChart } from '../components/CreatedTrendChart';
 import { USAGE_METRIC_HINTS, UsageMetricTitle } from '../components/UsageMetricTitle';
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
-import type { HistoryTenantStatsRow, SandboxHistoryStats, TenantUsageRow } from '../api/types';
+import type { CreatedSeriesResponse, SandboxHistoryStats, TenantUsageRow } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { SandboxStateTag, TenantTag } from '../components/SemanticTags';
+import {
+  canUseCreatedDayBucket,
+  collapseCreatedSeries,
+  defaultCreatedBucket,
+  type CreatedBucket,
+} from '../utils/createdTrend';
 import { formatDuration } from '../utils/format';
 import { historySandboxesPath, historyUsagePath } from '../utils/historyLinks';
 import {
@@ -279,6 +286,7 @@ export function OverviewPage() {
   const [historyOff, setHistoryOff] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<SandboxHistoryStats | null>(null);
+  const [created, setCreated] = useState<CreatedSeriesResponse | null>(null);
   const [monthTenants, setMonthTenants] = useState<TenantUsageRow[]>([]);
   const [monthTotals, setMonthTotals] = useState<UsageTotals | null>(null);
   const [prevMonthTotals, setPrevMonthTotals] = useState<UsageTotals | null>(null);
@@ -287,6 +295,16 @@ export function OverviewPage() {
   const tenantQuery = isAdmin ? tenantFilterToQuery(tenantFilter) : undefined;
   const liveSeq = useRef(0);
   const historySeq = useRef(0);
+  const rangeKey = range ? `${range[0].toISOString()}|${range[1].toISOString()}` : 'all';
+  const [bucketState, setBucketState] = useState<{ key: string; bucket: CreatedBucket | null }>({
+    key: rangeKey,
+    bucket: null,
+  });
+  const bucketRange = range ?? allTimeUsageRangeUtc();
+  const dayAllowed = canUseCreatedDayBucket(bucketRange);
+  const bucketOverride = bucketState.key === rangeKey ? bucketState.bucket : null;
+  const bucket: CreatedBucket =
+    bucketOverride === 'day' && !dayAllowed ? 'month' : (bucketOverride ?? defaultCreatedBucket(bucketRange));
 
   useEffect(() => {
     const seq = ++liveSeq.current;
@@ -317,20 +335,22 @@ export function OverviewPage() {
     const tenantArg = tenantQuery ? { tenant: tenantQuery } : {};
     void (async () => {
       try {
-        const [st, usage, prevUsage] = await Promise.all([
+        const [st, usage, prevUsage, createdSeries] = await Promise.all([
           historyApi.stats({ ...usageQuery, ...tenantArg }),
           historyApi.usage({ ...usageQuery, ...tenantArg }),
           prevUsageQuery
             ? historyApi.usage({ ...prevUsageQuery, ...tenantArg })
             : Promise.resolve(null),
+          historyApi.createdSeries({ ...usageQuery, ...tenantArg, bucket }),
         ]);
         if (seq !== historySeq.current) return;
-        if (st.enabled === false) {
+        if (st.enabled === false || createdSeries.enabled === false) {
           setHistoryOff(true);
           return;
         }
         setHistoryOff(false);
         setStats(st);
+        setCreated(createdSeries);
         setMonthTotals(usage.totals ?? null);
         setPrevMonthTotals(prevUsage?.totals ?? null);
         setMonthTenants(usage.tenants ?? []);
@@ -345,7 +365,7 @@ export function OverviewPage() {
         if (seq === historySeq.current) setLoading(false);
       }
     })();
-  }, [range, tenantQuery]);
+  }, [bucket, range, tenantQuery]);
 
   const periodPreset = useMemo(() => matchUsagePeriodPreset(range, { allowAll: true }), [range]);
 
@@ -388,7 +408,6 @@ export function OverviewPage() {
     (stats.totalRecords ?? 0) === 0 &&
     (monthTotals?.sandboxCount ?? 0) === 0;
   const historyEmpty = Boolean(countsAreEmpty && !range);
-  const periodEmpty = Boolean(countsAreEmpty && range);
 
   const tenantColumns: ColumnsType<TenantUsageRow> = useMemo(
     () => [
@@ -476,51 +495,11 @@ export function OverviewPage() {
     [range, usagePeriod?.from, usagePeriod?.to],
   );
 
-  const historyTenantColumns: ColumnsType<HistoryTenantStatsRow> = useMemo(
-    () => [
-      {
-        title: '租户',
-        dataIndex: 'tenant',
-        width: 140,
-        render: (t: string) => <TenantTag tenant={t} className="overview-tenant-tag" />,
-      },
-      {
-        title: range ? '重叠记录数' : '历史记录数',
-        dataIndex: 'totalRecords',
-        width: 120,
-        render: (v: number) => (
-          <Typography.Text strong className="overview-tenant-metric overview-tenant-metric--count">
-            {v}
-          </Typography.Text>
-        ),
-      },
-      {
-        title: '进行中',
-        dataIndex: 'activeRecords',
-        width: 100,
-        render: (v: number) => (
-          <span className="overview-tenant-metric overview-tenant-metric--active">{v}</span>
-        ),
-      },
-      {
-        title: range ? '区间内时长' : '累计运行时长',
-        dataIndex: 'totalWallClockSeconds',
-        render: (v: number) => (
-          <span className="overview-tenant-metric overview-tenant-metric--time">{formatDuration(v)}</span>
-        ),
-      },
-      {
-        title: range ? '区间内平均时长' : '平均运行时长',
-        dataIndex: 'avgWallClockSeconds',
-        render: (v: number, row) => (
-          <span className="overview-tenant-metric overview-tenant-metric--time">
-            {row.totalRecords > 0 ? formatDuration(v) : '—'}
-          </span>
-        ),
-      },
-    ],
-    [range],
+  const createdSeries = useMemo(
+    () => collapseCreatedSeries(created?.series ?? []),
+    [created],
   );
+  const createdHasData = (created?.totals ?? []).some((count) => count > 0);
 
   const quickLinks: { to: string; label: string }[] = isAdmin
     ? [
@@ -675,65 +654,40 @@ export function OverviewPage() {
             </div>
 
             <div className="overview-block">
-            <Typography.Title level={5} className="overview-section-title">
-              {range ? '区间记录' : '历史累计'}
-            </Typography.Title>
-            <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-              {range
-                ? '与所选区间有重叠的记录。时长只计落在区间内的部分。进行中仍指当前未结束。'
-                : '全部历史里与时间轴有重叠的记录。时长含仍在运行的沙箱。'}
-            </Typography.Paragraph>
-            <div className="overview-subsection">
-            {isAdmin && !tenantQuery && (stats?.tenants?.length ?? 0) > 0 ? (
-              <div className="overview-subsection-label">指标</div>
-            ) : null}
-            <div className="overview-history-grid">
-              <Card className="overview-history-card" bordered={false}>
-                <Statistic title={range ? '重叠记录数' : '历史记录总数'} value={stats?.totalRecords ?? 0} />
-              </Card>
-              <Card className="overview-history-card" bordered={false}>
-                <Statistic title="进行中（未结束）" value={stats?.activeRecords ?? 0} />
-              </Card>
-              <Card className="overview-history-card" bordered={false}>
-                <Statistic
-                  title={range ? '区间内时长' : '累计运行时长'}
-                  value={formatDuration(stats?.totalWallClockSeconds ?? 0)}
-                />
-              </Card>
-              <Card className="overview-history-card" bordered={false}>
-                <Statistic
-                  title={range ? '区间内平均时长' : '平均运行时长'}
-                  value={
-                    (stats?.totalRecords ?? 0) > 0 ? formatDuration(stats?.avgWallClockSeconds) : '—'
+              <div className="overview-section-head">
+                <Typography.Title level={5} className="overview-section-title" style={{ marginBottom: 0 }}>
+                  创建趋势
+                </Typography.Title>
+                <Segmented
+                  size="small"
+                  value={bucket}
+                  onChange={(value) =>
+                    setBucketState({ key: rangeKey, bucket: value as CreatedBucket })
                   }
+                  options={[
+                    { label: '按天', value: 'day', disabled: !dayAllowed },
+                    { label: '按月', value: 'month' },
+                  ]}
                 />
-              </Card>
-            </div>
-            </div>
-            {isAdmin && !tenantQuery && (stats?.tenants?.length ?? 0) > 0 && (
-              <div className="overview-subsection">
-                <div className="overview-subsection-label">{range ? '各租户区间记录' : '各租户总计'}</div>
-                <Card className="overview-tenant-card" bordered={false}>
-                  <Table
-                    className="overview-tenant-table"
-                    size="middle"
-                    rowKey="tenant"
-                    pagination={false}
-                    columns={historyTenantColumns}
-                    dataSource={stats?.tenants}
-                    rowClassName={(_, index) =>
-                      index % 2 === 0 ? 'overview-tenant-row-even' : 'overview-tenant-row-odd'
-                    }
-                  />
-                </Card>
               </div>
-            )}
+              <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
+                按创建时间计入所选区间，进行中与已结束各算一次。柱是各租户数量
+                {createdSeries.length > 1 ? '，折线是合计。' : '。'}
+                {!dayAllowed ? ' 区间超过 120 天时只提供按月。' : ''}
+              </Typography.Paragraph>
+              {created?.bucket === bucket && createdHasData ? (
+                <CreatedTrendChart
+                  points={created.points ?? []}
+                  series={createdSeries}
+                  totals={created.totals ?? []}
+                  bucket={bucket}
+                  showTotal={createdSeries.length > 1}
+                />
+              ) : created?.bucket === bucket ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该区间没有新创建的沙箱" />
+              ) : null}
             </div>
           </>
-        )}
-
-        {periodEmpty && (
-          <Typography.Paragraph type="secondary">该区间没有重叠的历史记录。</Typography.Paragraph>
         )}
 
         {historyEmpty && (

@@ -105,6 +105,21 @@ export interface HistoryTenantStatsRow {
   avgWallClockSeconds: number;
 }
 
+export interface CreatedSeriesRow {
+  tenant: string;
+  counts: number[];
+}
+
+export interface CreatedSeriesResponse {
+  enabled?: boolean;
+  bucket?: 'day' | 'month';
+  points?: string[];
+  series?: CreatedSeriesRow[];
+  totals?: number[];
+  asOf?: string;
+  period?: { from?: string; to?: string };
+}
+
 export interface SandboxHistoryStats {
   enabled?: boolean;
   totalRecords?: number;
