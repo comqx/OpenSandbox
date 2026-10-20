@@ -49,7 +49,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, buildContextApi } from '../api/client';
 import type { BuildContextItem, BuildJob } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
-import { AdminTenantSelect } from '../components/AdminTenantSelect';
+import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { TenantTag } from '../components/SemanticTags';
 import { BuildContextFileEditor } from '../components/BuildContextFileEditor';
 import { BuildContextFileTree } from '../components/BuildContextFileTree';
 import {
@@ -75,6 +76,7 @@ import {
 import { listBuildContextDirectories } from '../utils/buildContextTree';
 
 const CLOUD_SYNC_DEBOUNCE_MS = 900;
+const DEFAULT_DRAFT_DISPLAY_NAME = '我的沙箱镜像草稿';
 
 type SaveDraftMeta = {
   displayName: string;
@@ -138,17 +140,22 @@ export function SandboxImageBuildPage() {
   const [createKind, setCreateKind] = useState<'file' | 'directory'>('file');
   const [newPath, setNewPath] = useState('');
   const [downloading, setDownloading] = useState(false);
-  const [displayName, setDisplayName] = useState('我的沙箱镜像草稿');
+  const [displayName, setDisplayName] = useState(DEFAULT_DRAFT_DISPLAY_NAME);
+  const [draftNameConfirmed, setDraftNameConfirmed] = useState(false);
   const [draftVersion, setDraftVersion] = useState('1.0.0');
   const [draftRemark, setDraftRemark] = useState('');
   const [draftId, setDraftId] = useState<string | null>(null);
   const [saveDraftOpen, setSaveDraftOpen] = useState(false);
+  const [saveNameError, setSaveNameError] = useState('');
   const [saveFormName, setSaveFormName] = useState('');
   const [saveFormVersion, setSaveFormVersion] = useState('1.0.0');
   const [saveFormRemark, setSaveFormRemark] = useState('');
   const [cloudPersisted, setCloudPersisted] = useState(false);
   const [cloudDrafts, setCloudDrafts] = useState<BuildContextItem[]>([]);
-  const [adminTenant, setAdminTenant] = useState('');
+  const isAdmin = user?.role === 'admin';
+  const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [draftTenant, setDraftTenant] = useState<string | undefined>();
+  const [buildTenant, setBuildTenant] = useState<string | undefined>();
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [lastCloudSyncAt, setLastCloudSyncAt] = useState<string | null>(null);
@@ -173,9 +180,12 @@ export function SandboxImageBuildPage() {
   const draftIdRef = useRef(draftId);
   draftIdRef.current = draftId;
 
-  const tenantScope = user?.role === 'admin' ? adminTenant : user?.tenant;
-  const adminNeedsTenant = user?.role === 'admin' && !adminTenant;
-  const cloudActive = cloudPersisted && !adminNeedsTenant;
+  const listTenant = isAdmin ? tenantFilterToQuery(tenantFilter) : undefined;
+  const scopedTenant = isAdmin ? tenantFilterToQuery(tenantFilter) : user?.tenant;
+  const editorTenant = scopedTenant || draftTenant;
+  const viewingAllTenants = isAdmin && !scopedTenant;
+  const tenantScope = editorTenant;
+  const cloudActive = cloudPersisted && Boolean(editorTenant);
 
   const pathList = useMemo(() => files.map((file) => file.relativePath), [files]);
   const moveDirectoryOptions = useMemo(() => listBuildContextDirectories(pathList), [pathList]);
@@ -184,14 +194,9 @@ export function SandboxImageBuildPage() {
   const validation = useMemo(() => validateBuildContext(files, dockerfilePath), [files, dockerfilePath]);
 
   const refreshCloudDrafts = useCallback(async () => {
-    if (adminNeedsTenant) {
-      setCloudPersisted(false);
-      setCloudDrafts([]);
-      return;
-    }
     setCloudLoading(true);
     try {
-      const data = await buildContextApi.list(tenantScope);
+      const data = await buildContextApi.list(listTenant);
       setCloudPersisted(Boolean(data.persisted));
       setCloudDrafts(data.items ?? []);
     } catch {
@@ -200,7 +205,7 @@ export function SandboxImageBuildPage() {
     } finally {
       setCloudLoading(false);
     }
-  }, [adminNeedsTenant, tenantScope]);
+  }, [listTenant]);
 
   useEffect(() => {
     void refreshCloudDrafts();
@@ -235,7 +240,9 @@ export function SandboxImageBuildPage() {
       if (settledBuildsRef.current.has(key) || buildWatchersRef.current.has(key)) {
         continue;
       }
-      const source = new EventSource(buildLogsUrl(draft.id, job.taskId, tenantScope));
+      const source = new EventSource(
+        buildLogsUrl(draft.id, job.taskId, isAdmin ? draft.tenantId || editorTenant : undefined),
+      );
       source.onmessage = (event) => {
         const parsed = parseBuildLogData(event.data);
         if (parsed?.kind !== 'result') {
@@ -254,7 +261,7 @@ export function SandboxImageBuildPage() {
         buildWatchersRef.current.delete(key);
       }
     }
-  }, [cloudDrafts, refreshCloudDrafts, tenantScope]);
+  }, [cloudDrafts, editorTenant, isAdmin, refreshCloudDrafts]);
 
   useEffect(() => {
     const view = logViewRef.current;
@@ -578,17 +585,26 @@ export function SandboxImageBuildPage() {
     [cloudActive, ensureDraftContext, uploadFileToOss],
   );
 
-  const handleLoadDraft = async (contextId: string) => {
-    if (!cloudActive) {
+  const handleLoadDraft = async (contextId: string, tenant?: string) => {
+    if (!cloudPersisted) {
       return;
     }
+    const tenantId = tenant || editorTenant;
+    if (isAdmin && !tenantId) {
+      message.info('请先选择具体租户');
+      return;
+    }
+    if (isAdmin && tenantId) {
+      setDraftTenant(tenantId);
+    }
+    const queryTenant = isAdmin ? tenantId : undefined;
     setCloudLoading(true);
     try {
-      const ctx = await buildContextApi.get(contextId, tenantScope);
+      const ctx = await buildContextApi.get(contextId, queryTenant);
       const paths = Object.keys(ctx.manifest?.files ?? {});
       const loaded: ContextFile[] = [];
       for (const path of paths) {
-        const remote = await buildContextApi.getFile(contextId, path, tenantScope);
+        const remote = await buildContextApi.getFile(contextId, path, queryTenant);
         loaded.push({
           relativePath: remote.path,
           encoding: remote.encoding,
@@ -601,6 +617,9 @@ export function SandboxImageBuildPage() {
       setFiles(loaded);
       setDockerfilePath(ctx.dockerfilePath || DEFAULT_DOCKERFILE_PATH);
       setDisplayName(ctx.displayName);
+      setDraftNameConfirmed(
+        Boolean(ctx.displayName.trim()) && ctx.displayName.trim() !== DEFAULT_DRAFT_DISPLAY_NAME,
+      );
       setDraftVersion(ctx.buildVersion?.trim() || ctx.manifest?.buildVersion?.trim() || '1.0.0');
       setDraftRemark(ctx.remark?.trim() || ctx.manifest?.remark?.trim() || '');
       setDraftId(ctx.id);
@@ -613,12 +632,17 @@ export function SandboxImageBuildPage() {
     }
   };
 
-  const handleDeleteDraft = async (contextId: string) => {
-    if (!cloudActive) {
+  const handleDeleteDraft = async (contextId: string, tenant?: string) => {
+    if (!cloudPersisted) {
+      return;
+    }
+    const tenantId = tenant || editorTenant;
+    if (isAdmin && !tenantId) {
+      message.info('请先选择具体租户');
       return;
     }
     try {
-      await buildContextApi.remove(contextId, tenantScope);
+      await buildContextApi.remove(contextId, isAdmin ? tenantId : undefined);
       if (draftId === contextId) {
         setDraftId(null);
         setFiles(createDefaultContextFiles());
@@ -632,23 +656,28 @@ export function SandboxImageBuildPage() {
     }
   };
 
-  const handleDownloadTarFromOss = async (contextId: string, buildIfNeeded: boolean) => {
+  const handleDownloadTarFromOss = async (contextId: string, buildIfNeeded: boolean, tenant?: string) => {
+    const tenantId = isAdmin ? tenant || editorTenant : undefined;
+    if (isAdmin && !tenantId) {
+      message.info('请先选择具体租户');
+      return;
+    }
     try {
       let url: string;
       if (buildIfNeeded) {
         if (contextId === draftIdRef.current) {
           await syncAllFilesToOss();
         }
-        const built = await buildContextApi.buildTar(contextId, tenantScope);
+        const built = await buildContextApi.buildTar(contextId, tenantId);
         url = built.downloadUrl;
       } else {
-        const existing = await buildContextApi.getTarUrl(contextId, tenantScope);
+        const existing = await buildContextApi.getTarUrl(contextId, tenantId);
         url = existing.downloadUrl;
       }
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch {
       if (!buildIfNeeded) {
-        const built = await buildContextApi.buildTar(contextId, tenantScope);
+        const built = await buildContextApi.buildTar(contextId, tenantId);
         window.open(built.downloadUrl, '_blank', 'noopener,noreferrer');
         return;
       }
@@ -665,20 +694,27 @@ export function SandboxImageBuildPage() {
       message.error(validation.errors[0] ?? '构建上下文校验失败');
       return;
     }
-    setSaveFormName(displayName.trim() || '我的沙箱镜像草稿');
+    setSaveFormName(draftNameConfirmed ? displayName.trim() : '');
     setSaveFormVersion(draftVersion.trim() || '1.0.0');
     setSaveFormRemark(draftRemark);
+    setSaveNameError('');
     setSaveDraftOpen(true);
   };
 
   const confirmSaveDraft = async () => {
+    const name = saveFormName.trim();
+    if (!name) {
+      setSaveNameError('请填写镜像名称');
+      return;
+    }
     const meta: SaveDraftMeta = {
-      displayName: saveFormName,
+      displayName: name,
       buildVersion: saveFormVersion,
       remark: saveFormRemark,
     };
     try {
       await syncAllFilesToOss(meta);
+      setDraftNameConfirmed(true);
       setDisplayName(meta.displayName.trim());
       setDraftVersion(meta.buildVersion.trim());
       setDraftRemark(meta.remark.trim());
@@ -713,12 +749,14 @@ export function SandboxImageBuildPage() {
   }, []);
 
   const openBuildLogs = useCallback(
-    (contextId: string, taskId: string) => {
+    (contextId: string, taskId: string, tenant?: string) => {
       closeBuildLogs();
       setLogLines([]);
       setLogResult(null);
       setLogOpen(true);
-      const source = new EventSource(buildLogsUrl(contextId, taskId, tenantScope));
+      const source = new EventSource(
+        buildLogsUrl(contextId, taskId, isAdmin ? tenant || editorTenant : undefined),
+      );
       logSourceRef.current = source;
       source.onopen = () => {
         setLogLines([]);
@@ -743,33 +781,44 @@ export function SandboxImageBuildPage() {
         void refreshCloudDrafts();
       };
     },
-    [closeBuildLogs, refreshCloudDrafts, tenantScope],
+    [closeBuildLogs, editorTenant, isAdmin, refreshCloudDrafts],
   );
 
-  const openBuildForm = (contextId: string | null) => {
+  const openBuildForm = (contextId: string | null, tenant?: string) => {
     setBuildContextId(contextId);
+    setBuildTenant(tenant || editorTenant);
     setBuildImageSuffix('');
     setBuildArch('1');
     setBuildOpen(true);
   };
 
-  const handleBuildClick = (contextId: string | null, contextDockerfile: string, latest?: BuildJob | null) => {
-    if (!cloudActive) {
+  const handleBuildClick = (
+    contextId: string | null,
+    contextDockerfile: string,
+    latest?: BuildJob | null,
+    tenant?: string,
+  ) => {
+    if (!cloudPersisted) {
       message.warning('云端草稿未配置，无法提交构建。');
+      return;
+    }
+    const tenantId = tenant || editorTenant;
+    if (isAdmin && !tenantId) {
+      message.info('请先选择具体租户，再构建镜像');
       return;
     }
     if (latest?.status === 'building') {
       if (!contextId) {
         return;
       }
-      openBuildLogs(contextId, latest.taskId);
+      openBuildLogs(contextId, latest.taskId, tenantId);
       return;
     }
     if (contextDockerfile !== DEFAULT_DOCKERFILE_PATH) {
       message.error('tar 包根目录缺少 Dockerfile');
       return;
     }
-    openBuildForm(contextId);
+    openBuildForm(contextId, tenantId);
   };
 
   const confirmBuild = async () => {
@@ -796,20 +845,20 @@ export function SandboxImageBuildPage() {
       const job = await buildContextApi.submitBuild(
         contextId,
         { imageName, basicStruct: buildArch },
-        tenantScope,
+        buildTenant || editorTenant,
       );
       setBuildOpen(false);
-      openBuildLogs(contextId, job.taskId);
+      openBuildLogs(contextId, job.taskId, buildTenant || editorTenant);
       void refreshCloudDrafts();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'IMAGE_BUILD_IN_PROGRESS') {
         setBuildOpen(false);
-        const data = await buildContextApi.list(tenantScope);
+        const data = await buildContextApi.list(listTenant);
         setCloudPersisted(Boolean(data.persisted));
         setCloudDrafts(data.items ?? []);
         const row = (data.items ?? []).find((item) => item.id === (buildContextId ?? draftIdRef.current));
         if (row?.latestBuild?.status === 'building') {
-          openBuildLogs(row.id, row.latestBuild.taskId);
+          openBuildLogs(row.id, row.latestBuild.taskId, row.tenantId);
           return;
         }
       }
@@ -820,8 +869,13 @@ export function SandboxImageBuildPage() {
   };
 
   const handleNewDraft = () => {
+    if (viewingAllTenants) {
+      message.info('请先选择具体租户，再新建 Dockerfile');
+      return;
+    }
     setDraftId(null);
-    setDisplayName('我的沙箱镜像草稿');
+    setDraftNameConfirmed(false);
+    setDisplayName(DEFAULT_DRAFT_DISPLAY_NAME);
     setDraftVersion('1.0.0');
     setDraftRemark('');
     setFiles(createDefaultContextFiles());
@@ -829,7 +883,38 @@ export function SandboxImageBuildPage() {
     setSelectedPath(DEFAULT_DOCKERFILE_PATH);
   };
 
+  const onTenantFilterChange = (value: string) => {
+    const next = tenantFilterToQuery(value);
+    setTenantFilter(value);
+    if (!next) {
+      return;
+    }
+    if (draftTenant && draftTenant !== next) {
+      setDraftId(null);
+      setDraftNameConfirmed(false);
+      setDisplayName(DEFAULT_DRAFT_DISPLAY_NAME);
+      setDraftVersion('1.0.0');
+      setDraftRemark('');
+      setFiles(createDefaultContextFiles());
+      setDockerfilePath(DEFAULT_DOCKERFILE_PATH);
+      setSelectedPath(DEFAULT_DOCKERFILE_PATH);
+    }
+    setDraftTenant(next);
+  };
+
   const draftColumns = [
+    ...(viewingAllTenants
+      ? [
+          {
+            title: '租户',
+            dataIndex: 'tenantId',
+            key: 'tenantId',
+            width: 140,
+            ellipsis: true,
+            render: (tenant: string) => <TenantTag tenant={tenant} />,
+          },
+        ]
+      : []),
     {
       title: '名称',
       dataIndex: 'displayName',
@@ -886,25 +971,25 @@ export function SandboxImageBuildPage() {
       width: 320,
       render: (_: unknown, row: BuildContextItem) => (
         <Space size="small" wrap>
-          <Button type="link" size="small" onClick={() => void handleLoadDraft(row.id)}>
+          <Button type="link" size="small" onClick={() => void handleLoadDraft(row.id, row.tenantId)}>
             继续编辑
           </Button>
           <Button
             type="link"
             size="small"
-            onClick={() => void handleDownloadTarFromOss(row.id, true)}
+            onClick={() => void handleDownloadTarFromOss(row.id, true, row.tenantId)}
           >
             下载 tar
           </Button>
           <Button
             type="link"
             size="small"
-            disabled={!cloudActive || (row.latestBuild?.status !== 'building' && row.dockerfilePath !== 'Dockerfile')}
-            onClick={() => handleBuildClick(row.id, row.dockerfilePath, row.latestBuild)}
+            disabled={!cloudPersisted || (row.latestBuild?.status !== 'building' && row.dockerfilePath !== 'Dockerfile')}
+            onClick={() => handleBuildClick(row.id, row.dockerfilePath, row.latestBuild, row.tenantId)}
           >
             {row.latestBuild?.status === 'building' ? '查看日志' : '构建镜像'}
           </Button>
-          <Button type="link" size="small" danger onClick={() => void handleDeleteDraft(row.id)}>
+          <Button type="link" size="small" danger onClick={() => void handleDeleteDraft(row.id, row.tenantId)}>
             删除
           </Button>
         </Space>
@@ -921,13 +1006,15 @@ export function SandboxImageBuildPage() {
         编辑 Dockerfile 与构建上下文文件。启用 OSS 后，上传与编辑器内容会自动同步；打包为未压缩 tar 并写入 OSS 供下载。
       </Typography.Paragraph>
 
-      {user?.role === 'admin' ? (
-        <div style={{ marginBottom: 16 }}>
-          <AdminTenantSelect value={adminTenant} onChange={setAdminTenant} placeholder="选择租户（云端草稿）" />
-        </div>
-      ) : null}
+      <div style={{ marginBottom: 16 }}>
+        {isAdmin ? (
+          <AdminTenantSelect value={tenantFilter} onChange={onTenantFilterChange} />
+        ) : (
+          <TenantTag tenant={user?.tenant} />
+        )}
+      </div>
 
-      {cloudActive ? (
+      {cloudPersisted ? (
         <Card
           title="镜像 Dockerfile 列表"
           size="small"
@@ -1235,14 +1322,31 @@ export function SandboxImageBuildPage() {
         </Typography.Paragraph>
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div>
-            <Typography.Text>镜像名称</Typography.Text>
+            <div style={{ marginBottom: 4 }}>
+              <Typography.Text type="danger" aria-hidden>
+                *{' '}
+              </Typography.Text>
+              <Typography.Text>镜像名称</Typography.Text>
+            </div>
             <Input
               value={saveFormName}
-              onChange={(event) => setSaveFormName(event.target.value)}
-              placeholder="例如 team/python-data-sandbox"
+              status={saveNameError ? 'error' : undefined}
+              onChange={(event) => {
+                setSaveFormName(event.target.value);
+                if (event.target.value.trim()) {
+                  setSaveNameError('');
+                }
+              }}
+              placeholder="请填写镜像名称，例如：python3.11+agentscope沙箱镜像"
               maxLength={120}
               showCount
+              aria-required
             />
+            {saveNameError ? (
+              <Typography.Text type="danger" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                {saveNameError}
+              </Typography.Text>
+            ) : null}
           </div>
           <div>
             <Typography.Text>版本</Typography.Text>

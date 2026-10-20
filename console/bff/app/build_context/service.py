@@ -129,6 +129,11 @@ def list_contexts(settings: Settings, tenant_id: str) -> dict[str, Any]:
     return {**feature_meta(settings), "items": build_store.list_contexts(tenant_id)}
 
 
+def list_all_contexts(settings: Settings) -> dict[str, Any]:
+    _require_enabled(settings)
+    return {**feature_meta(settings), "items": build_store.list_all_contexts()}
+
+
 def create_context(settings: Settings, tenant_id: str, body: dict[str, Any], actor: str) -> dict[str, Any]:
     _require_enabled(settings)
     display_name = str(body.get("displayName") or "").strip()

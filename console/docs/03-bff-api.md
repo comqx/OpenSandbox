@@ -139,7 +139,7 @@ Private registries use the namespace `default` ServiceAccount `imagePullSecrets`
 
 ## Sandbox image build context (Phase 2a)
 
-Requires `BFF_HISTORY_ENABLED`, `BFF_IMAGE_BUILD_ENABLED=true`, and OSS credentials (`BFF_IMAGE_BUILD_OSS_*` or fallback `BFF_NODEAGENT_OSS_*`). Admin calls must include `?tenant=`.
+Requires `BFF_HISTORY_ENABLED`, `BFF_IMAGE_BUILD_ENABLED=true`, and OSS credentials (`BFF_IMAGE_BUILD_OSS_*` or fallback `BFF_NODEAGENT_OSS_*`). A tenant session is always scoped to itself. An admin `GET /api/images/build-contexts` without `?tenant=` returns every tenant. Admin create, read, update, and delete calls still require `?tenant=`.
 
 | Method | Path | Notes |
 |--------|------|--------|

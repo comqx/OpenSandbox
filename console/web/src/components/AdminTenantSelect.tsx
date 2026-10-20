@@ -63,7 +63,7 @@ export function AdminTenantSelect({ value, onChange, width = 240, placeholder }:
       onChange={onChange}
       options={options}
       optionFilterProp="label"
-      placeholder={placeholder ?? '全部租户'}
+      placeholder={placeholder}
     />
   );
 }

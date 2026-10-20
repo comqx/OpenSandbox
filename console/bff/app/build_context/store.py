@@ -75,6 +75,26 @@ def list_contexts(tenant_id: str) -> list[dict[str, Any]]:
     return items
 
 
+def list_all_contexts() -> list[dict[str, Any]]:
+    pool = history_store._pool
+    if pool is None:
+        return []
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM console_sandbox_build_context
+            ORDER BY updated_at DESC, display_name ASC
+            """
+        ).fetchall()
+    items = [_row_api(row) for row in rows]
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault(str(item["tenantId"]), []).append(item)
+    for tenant_id, group in grouped.items():
+        _attach_latest_builds(tenant_id, group)
+    return items
+
+
 def get_context(tenant_id: str, context_id: str) -> dict[str, Any] | None:
     pool = history_store._pool
     if pool is None:

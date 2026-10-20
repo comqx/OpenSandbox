@@ -62,8 +62,11 @@ async def list_build_contexts(
 ) -> dict[str, Any]:
     del request
     settings = get_settings()
-    tenant_id = _tenant_scope(payload, tenant)
+    role = payload.get("role")
     try:
+        if role == "admin" and not (tenant or "").strip():
+            return build_service.list_all_contexts(settings)
+        tenant_id = _tenant_scope(payload, tenant)
         return build_service.list_contexts(settings, tenant_id)
     except BuildContextError as exc:
         raise _error(exc) from exc
