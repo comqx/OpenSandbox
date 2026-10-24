@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # In-cluster image builder. Empty disables remote build submission.
     bff_image_builder_base_url: str = ""
 
+    # Allow Prometheus URLs that resolve to RFC1918 (typical in-cluster Service). Disable for strictly outbound-only BFF.
+    bff_prometheus_allow_internal: bool = True
+
     @property
     def cors_origins_list(self) -> list[str]:
         if self.bff_cors_origins.strip() == "*":

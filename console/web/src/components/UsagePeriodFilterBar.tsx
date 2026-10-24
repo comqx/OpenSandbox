@@ -29,10 +29,11 @@ dayjs.extend(utc);
 
 type PresetSelectValue = Exclude<UsagePeriodPreset, 'custom'>;
 
-function buildSelectOptions(allowAllTime: boolean) {
+function buildSelectOptions(allowAllTime: boolean, includeRollingDays: boolean) {
+  const rolling: PresetSelectValue[] = includeRollingDays ? ['last7d', 'last15d'] : [];
   const keys: PresetSelectValue[] = allowAllTime
-    ? ['all', 'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter']
-    : ['thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter'];
+    ? ['all', ...rolling, 'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter']
+    : [...rolling, 'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter'];
   return [
     ...keys.map((value) => ({
       value,
@@ -46,6 +47,7 @@ export function UsagePeriodFilterBar({
   range,
   onRangeChange,
   allowAllTime = false,
+  includeRollingDays = false,
   allTimeLabel,
   trailing,
 }: {
@@ -53,6 +55,8 @@ export function UsagePeriodFilterBar({
   range: [Dayjs, Dayjs] | null;
   onRangeChange: (range: [Dayjs, Dayjs] | null) => void;
   allowAllTime?: boolean;
+  /** Adds 「最近 7/15 天」 to the preset dropdown. */
+  includeRollingDays?: boolean;
   /** Overrides the preset label for the all-time option. */
   allTimeLabel?: string;
   trailing?: ReactNode;
@@ -63,12 +67,12 @@ export function UsagePeriodFilterBar({
   );
 
   const selectOptions = useMemo(() => {
-    const options = buildSelectOptions(allowAllTime);
+    const options = buildSelectOptions(allowAllTime, includeRollingDays);
     if (!allTimeLabel) return options;
     return options.map((option) =>
       option.value === 'all' ? { ...option, label: allTimeLabel } : option,
     );
-  }, [allTimeLabel, allowAllTime]);
+  }, [allTimeLabel, allowAllTime, includeRollingDays]);
 
   const onPresetSelect = (key: UsagePeriodPreset) => {
     if (key === 'custom') return;

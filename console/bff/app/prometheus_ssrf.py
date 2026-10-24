@@ -27,19 +27,43 @@ _BLOCKED_HOSTNAMES = frozenset(
 )
 
 
-def _ip_blocked(addr: ipaddress._BaseAddress) -> bool:
+def _ip_always_forbidden(addr: ipaddress._BaseAddress) -> bool:
     return bool(
-        addr.is_private
-        or addr.is_loopback
+        addr.is_loopback
         or addr.is_link_local
-        or addr.is_reserved
+        or addr.is_unspecified
         or addr.is_multicast
-        or addr.is_unspecified,
+        or addr.is_reserved,
     )
 
 
-def validate_prometheus_base_url(raw: str) -> str:
-    """Return normalized base URL or raise ValueError."""
+def _kubernetes_internal_hostname(host: str) -> bool:
+    """Service DNS names commonly used for in-cluster Prometheus."""
+    lowered = host.lower().rstrip(".")
+    if lowered in _BLOCKED_HOSTNAMES:
+        return False
+    if "." not in lowered:
+        return True
+    return (
+        lowered.endswith(".svc.cluster.local")
+        or lowered.endswith(".cluster.local")
+        or lowered.endswith(".svc")
+    )
+
+
+def _private_resolution_allowed(host: str, *, allow_internal: bool) -> bool:
+    if allow_internal:
+        return True
+    return _kubernetes_internal_hostname(host)
+
+
+def validate_prometheus_base_url(raw: str, *, allow_internal: bool = True) -> str:
+    """Return normalized base URL or raise ValueError.
+
+    Console BFF usually runs in-cluster; ``allow_internal=True`` (default) permits
+    RFC1918 targets. Loopback, link-local, and cloud metadata hostnames stay blocked.
+    Set ``BFF_PROMETHEUS_ALLOW_INTERNAL=false`` when the BFF must not call private IPs.
+    """
     url = raw.strip().rstrip("/")
     if not url:
         raise ValueError("prometheusUrl must be non-empty when set")
@@ -60,15 +84,18 @@ def validate_prometheus_base_url(raw: str) -> str:
     except ValueError:
         literal = None
     if literal is not None:
-        if _ip_blocked(literal):
-            raise ValueError("prometheusUrl must not target private or link-local addresses")
+        if _ip_always_forbidden(literal):
+            raise ValueError("prometheusUrl must not target loopback or link-local addresses")
+        if literal.is_private and not allow_internal:
+            raise ValueError(
+                "prometheusUrl must not target private addresses (set BFF_PROMETHEUS_ALLOW_INTERNAL=true for in-cluster Prometheus)",
+            )
         return url
 
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror:
-        # In-cluster service names may not resolve from every environment; literal-IP checks still apply.
         return url
 
     for info in infos:
@@ -76,7 +103,11 @@ def validate_prometheus_base_url(raw: str) -> str:
         if not sockaddr:
             continue
         resolved = ipaddress.ip_address(sockaddr[0])
-        if _ip_blocked(resolved):
-            raise ValueError("prometheusUrl must not resolve to private or link-local addresses")
+        if _ip_always_forbidden(resolved):
+            raise ValueError("prometheusUrl must not resolve to loopback or link-local addresses")
+        if resolved.is_private and not _private_resolution_allowed(host, allow_internal=allow_internal):
+            raise ValueError(
+                "prometheusUrl must not resolve to private addresses (use a cluster DNS name or enable BFF_PROMETHEUS_ALLOW_INTERNAL)",
+            )
 
     return url

@@ -513,12 +513,19 @@ export const historyApi = {
   },
   resourceRecommendations: (query?: {
     window?: '7d' | '15d';
+    from?: string;
+    to?: string;
     label?: string;
     sandboxId?: string;
     tenant?: string;
   }) => {
     const params = new URLSearchParams();
-    params.set('window', query?.window ?? '7d');
+    if (query?.from && query?.to) {
+      params.set('from', query.from);
+      params.set('to', query.to);
+    } else {
+      params.set('window', query?.window ?? '7d');
+    }
     if (query?.label) params.set('label', query.label);
     if (query?.sandboxId) params.set('sandboxId', query.sandboxId);
     if (query?.tenant) params.set('tenant', query.tenant);

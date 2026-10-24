@@ -284,7 +284,13 @@ def compute_resource_recommendations(
             "Set Prometheus URL in platform settings",
         )
     try:
-        cfg = {**cfg, "prometheusUrl": validate_prometheus_base_url(prom_url)}
+        cfg = {
+            **cfg,
+            "prometheusUrl": validate_prometheus_base_url(
+                prom_url,
+                allow_internal=settings.bff_prometheus_allow_internal,
+            ),
+        }
     except ValueError as exc:
         raise RecommendationError("PROMETHEUS_URL_INVALID", str(exc)) from exc
 

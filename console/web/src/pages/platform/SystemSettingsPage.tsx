@@ -12,7 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Typography, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Tabs,
+  Typography,
+  message,
+} from 'antd';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '../../auth/AuthContext';
@@ -62,25 +75,16 @@ export function SystemSettingsPage() {
     return <Alert type="error" showIcon message="仅 Admin 可访问系统设置" />;
   }
 
-  return (
-    <div>
-      <Typography.Title level={4}>系统设置</Typography.Title>
-      <Typography.Paragraph type="secondary">
-        配置 Grafana Dashboard 嵌入（iframe 使用 kiosk 模式：隐藏 Grafana 顶栏与用户区，保留变量与时间范围）。租户仅能在沙箱详情查看本 namespace 的监控；不在此存储 Grafana 登录密码。
-      </Typography.Paragraph>
-
-      {!meta.persisted && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="设置只读"
-          description="启用 BFF_HISTORY_DATABASE_URL 或配置 BFF_PLATFORM_SETTINGS_PATH 后，Admin 方可在此保存覆盖项。"
-        />
-      )}
-
-      <Card loading={loading} title="Grafana 监控">
-        <Form form={form} layout="vertical" style={{ maxWidth: 640 }}>
+  const tabItems = [
+    {
+      key: 'grafana',
+      label: 'Grafana 监控',
+      children: (
+        <>
+          <Typography.Paragraph type="secondary">
+            沙箱详情页嵌入 Grafana Dashboard（kiosk 模式）。租户仅能看到本 namespace 监控；不在此存储 Grafana
+            登录密码。
+          </Typography.Paragraph>
           <Form.Item name="enabled" label="启用沙箱监控" valuePropName="checked">
             <Switch />
           </Form.Item>
@@ -143,28 +147,23 @@ export function SystemSettingsPage() {
           <Form.Item name="authProxyUserHeader" label="Auth Proxy 头名称">
             <Input placeholder="X-WEBAUTH-USER" />
           </Form.Item>
-          <Space>
-            <Button type="primary" loading={saving} onClick={() => void onSave()}>
-              保存
-            </Button>
-            {meta.source && (
-              <Typography.Text type="secondary">持久化：{meta.source}</Typography.Text>
-            )}
-          </Space>
-        </Form>
-      </Card>
-
-      <Card loading={loading} title="资源推荐（Prometheus）" style={{ marginTop: 16 }}>
-        <Typography.Paragraph type="secondary">
-          按历史沙箱监控数据做跨沙箱 pooled 分位数，生成 requests / limits 建议。PromQL 须包含{' '}
-          <code>{'{{namespace}}'}</code> 与 <code>{'{{pod}}'}</code>（Pod 名为沙箱 ID 加 <code>-0</code>）。
-        </Typography.Paragraph>
-        <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
+        </>
+      ),
+    },
+    {
+      key: 'recommendation',
+      label: '资源推荐',
+      children: (
+        <>
+          <Typography.Paragraph type="secondary">
+            按历史沙箱监控数据做跨沙箱 pooled 分位数，生成 requests / limits 建议。PromQL 须包含{' '}
+            <code>{'{{namespace}}'}</code> 与 <code>{'{{pod}}'}</code>（Pod 名为沙箱 ID 加 <code>-0</code>）。
+          </Typography.Paragraph>
           <Form.Item name={['resourceRecommendation', 'enabled']} label="启用资源推荐" valuePropName="checked">
             <Switch />
           </Form.Item>
           <Form.Item name={['resourceRecommendation', 'prometheusUrl']} label="Prometheus 查询地址">
-            <Input placeholder="http://prometheus:9090" />
+            <Input placeholder="http://prometheus.monitoring.svc:9090" />
           </Form.Item>
           <Form.Item
             name={['resourceRecommendation', 'memoryPromql']}
@@ -197,9 +196,36 @@ export function SystemSettingsPage() {
               <Input placeholder="200Mi" style={{ width: 120 }} />
             </Form.Item>
           </Space>
-          <Button type="primary" loading={saving} onClick={() => void onSave()}>
-            保存
-          </Button>
+        </>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <Typography.Title level={4}>系统设置</Typography.Title>
+
+      {!meta.persisted && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="设置只读"
+          description="启用 BFF_HISTORY_DATABASE_URL 或配置 BFF_PLATFORM_SETTINGS_PATH 后，Admin 方可在此保存覆盖项。"
+        />
+      )}
+
+      <Card loading={loading}>
+        <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
+          <Tabs defaultActiveKey="grafana" items={tabItems} />
+          <Space style={{ marginTop: 8 }}>
+            <Button type="primary" loading={saving} onClick={() => void onSave()}>
+              保存全部设置
+            </Button>
+            {meta.source && (
+              <Typography.Text type="secondary">持久化：{meta.source}</Typography.Text>
+            )}
+          </Space>
         </Form>
       </Card>
     </div>

@@ -63,6 +63,17 @@ export function presetLastQuarter(): [Dayjs, Dayjs] {
   return [start, end];
 }
 
+/** Rolling UTC calendar window ending today (inclusive). */
+export function presetLast7Days(): [Dayjs, Dayjs] {
+  const end = dayjs.utc().startOf('day');
+  return [end.subtract(6, 'day'), end];
+}
+
+export function presetLast15Days(): [Dayjs, Dayjs] {
+  const end = dayjs.utc().startOf('day');
+  return [end.subtract(14, 'day'), end];
+}
+
 export function monthRangeToUsageQuery(range: [Dayjs, Dayjs]) {
   return { from: toIsoUtcStart(range[0]), to: toIsoUtcEndExclusive(range[1]) };
 }
@@ -129,6 +140,8 @@ export function usageQueryToDayRange(from: string, to: string): [Dayjs, Dayjs] {
 
 export type UsagePeriodPreset =
   | 'all'
+  | 'last7d'
+  | 'last15d'
   | 'thisMonth'
   | 'lastMonth'
   | 'thisQuarter'
@@ -141,6 +154,10 @@ function rangesSameUtcDay(a: [Dayjs, Dayjs], b: [Dayjs, Dayjs]): boolean {
 
 export function usagePeriodPresetRange(key: Exclude<UsagePeriodPreset, 'custom' | 'all'>): [Dayjs, Dayjs] {
   switch (key) {
+    case 'last7d':
+      return presetLast7Days();
+    case 'last15d':
+      return presetLast15Days();
     case 'thisMonth':
       return presetThisMonth();
     case 'lastMonth':
@@ -160,6 +177,8 @@ export function matchUsagePeriodPreset(
     return opts?.allowAll ? 'all' : 'custom';
   }
   const presets: Exclude<UsagePeriodPreset, 'custom' | 'all'>[] = [
+    'last7d',
+    'last15d',
     'thisMonth',
     'lastMonth',
     'thisQuarter',
@@ -175,6 +194,8 @@ export function matchUsagePeriodPreset(
 
 export const USAGE_PERIOD_PRESET_LABELS: Record<UsagePeriodPreset, string> = {
   all: '全部时间',
+  last7d: '最近 7 天',
+  last15d: '最近 15 天',
   thisMonth: '本月',
   lastMonth: '上月',
   thisQuarter: '本季度',

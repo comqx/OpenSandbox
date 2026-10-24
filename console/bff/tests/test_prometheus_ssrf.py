@@ -21,13 +21,20 @@ def test_validate_prometheus_base_url_accepts_public_https():
     assert validate_prometheus_base_url("https://prometheus.example.com/") == "https://prometheus.example.com"
 
 
-def test_validate_prometheus_base_url_rejects_private_ip():
+def test_validate_prometheus_base_url_allows_private_ip_when_internal_enabled():
+    assert (
+        validate_prometheus_base_url("http://10.96.0.1:9090", allow_internal=True)
+        == "http://10.96.0.1:9090"
+    )
+
+
+def test_validate_prometheus_base_url_rejects_private_ip_when_internal_disabled():
     with pytest.raises(ValueError, match="private"):
-        validate_prometheus_base_url("http://10.0.0.1:9090")
+        validate_prometheus_base_url("http://10.0.0.1:9090", allow_internal=False)
 
 
 def test_validate_prometheus_base_url_rejects_localhost():
-    with pytest.raises(ValueError, match="not allowed|private"):
+    with pytest.raises(ValueError, match="loopback|not allowed"):
         validate_prometheus_base_url("http://localhost:9090")
 
 

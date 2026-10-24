@@ -198,7 +198,7 @@ def _validate_grafana_patch(body: dict[str, Any]) -> dict[str, Any]:
     return patch
 
 
-def _validate_resource_recommendation_patch(body: dict[str, Any]) -> dict[str, Any]:
+def _validate_resource_recommendation_patch(body: dict[str, Any], settings: Settings) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("resourceRecommendation must be an object")
     patch: dict[str, Any] = {}
@@ -207,7 +207,7 @@ def _validate_resource_recommendation_patch(body: dict[str, Any]) -> dict[str, A
     if "prometheusUrl" in body:
         raw = str(body["prometheusUrl"]).strip()
         if raw:
-            patch["prometheusUrl"] = validate_prometheus_base_url(raw)
+            patch["prometheusUrl"] = _validate_prometheus_url(raw, settings)
         else:
             patch["prometheusUrl"] = ""
     for key in ("memoryPromql", "cpuPromql"):
@@ -247,6 +247,10 @@ def _validate_resource_recommendation_patch(body: dict[str, Any]) -> dict[str, A
     return patch
 
 
+def _validate_prometheus_url(raw: str, settings: Settings) -> str:
+    return validate_prometheus_base_url(raw, allow_internal=settings.bff_prometheus_allow_internal)
+
+
 def save_platform_settings(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
     global _OVERRIDES
     if not persistence_available():
@@ -257,7 +261,7 @@ def save_platform_settings(settings: Settings, body: dict[str, Any]) -> dict[str
     _OVERRIDES = {**_OVERRIDES, **grafana_patch}
 
     if "resourceRecommendation" in body:
-        rec_patch = _validate_resource_recommendation_patch(body["resourceRecommendation"])
+        rec_patch = _validate_resource_recommendation_patch(body["resourceRecommendation"], settings)
         current = _OVERRIDES.get("resourceRecommendation")
         if not isinstance(current, dict):
             current = {}
