@@ -46,6 +46,8 @@ Usage CPU·秒 and 内存·Gi·秒 skip rows that have no create-time `resourceL
 
 `GET /api/history/resource-recommendations` uses the same tenant scope and optional `label` / `sandboxId` filters. Query `window=7d|15d` (default `7d`) selects a rolling UTC window, or pass `from` and `to` (UTC, `to` exclusive) like other history endpoints. Optional `reconcile=false` skips the lifecycle reconcile pass when `BFF_HISTORY_RECONCILE_ON_READ` is enabled. The BFF loads matching history rows (including terminated sandboxes), fetches Prometheus range samples for each sandbox’s active interval (Pod `{sandboxId}-0`), pools all samples, and returns pooled percentile-based **requests** (baseline) and **limits** (ratio × baseline with floors). Configure Prometheus URL, PromQL templates, percentile, and limit ratios in **Admin → 系统设置 → 资源推荐**.
 
+Console navigation groups **沙箱列表**, **申请历史**, and **资源推荐** under the **沙箱** sidebar submenu. **申请历史 → 计算沙箱推荐配置** calls `POST /api/history/resource-recommendation-runs` with the same query parameters as the GET above: it computes once and persists the full JSON result plus filter metadata in `sandbox_resource_recommendation_runs`. List saved runs with `GET /api/history/resource-recommendation-runs` (`page`, `pageSize`, optional `tenant` for admins) and fetch one with `GET /api/history/resource-recommendation-runs/{id}`.
+
 ## API
 
 See [03-bff-api.md](./03-bff-api.md) and `/api/history/*`.

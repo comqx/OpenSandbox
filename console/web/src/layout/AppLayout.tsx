@@ -17,7 +17,6 @@ import {
   CameraOutlined,
   DatabaseOutlined,
   FileSearchOutlined,
-  HistoryOutlined,
   HomeOutlined,
   LogoutOutlined,
   PieChartOutlined,
@@ -39,6 +38,7 @@ const { Header, Sider, Content } = Layout;
 
 const PLATFORM_SUBMENU_KEY = 'platform';
 const IMAGE_SUBMENU_KEY = 'image';
+const SANDBOX_SUBMENU_KEY = 'sandbox';
 
 function SiderLogo() {
   return (
@@ -78,14 +78,14 @@ export function AppLayout() {
         label: '概览',
       },
       {
-        key: sandboxListKey,
+        key: SANDBOX_SUBMENU_KEY,
         icon: <UnorderedListOutlined />,
-        label: sandboxListLabel,
-      },
-      {
-        key: '/history/sandboxes',
-        icon: <HistoryOutlined />,
-        label: '申请历史',
+        label: '沙箱',
+        children: [
+          { key: sandboxListKey, label: sandboxListLabel },
+          { key: '/history/sandboxes', label: '申请历史' },
+          { key: '/history/resource-recommendations', label: '资源推荐' },
+        ],
       },
       {
         key: IMAGE_SUBMENU_KEY,
@@ -142,6 +142,9 @@ export function AppLayout() {
     const path = location.pathname;
     if (path === '/' || path === '') return '/';
     if (path === '/history/sandboxes') return '/history/sandboxes';
+    if (path === '/history/resource-recommendations' || path.startsWith('/history/resource-recommendations/')) {
+      return '/history/resource-recommendations';
+    }
     if (path === '/sandboxes/new') return sandboxListKey;
     if (path.startsWith('/admin/sandboxes') || (isAdmin && path.startsWith('/sandboxes/'))) {
       return sandboxListKey;
@@ -151,7 +154,11 @@ export function AppLayout() {
   }, [location.pathname, isAdmin, sandboxListKey]);
 
   /** 「平台」「沙箱镜像管理」分组默认展开 */
-  const [openKeys, setOpenKeys] = useState<string[]>([PLATFORM_SUBMENU_KEY, IMAGE_SUBMENU_KEY]);
+  const [openKeys, setOpenKeys] = useState<string[]>([
+    SANDBOX_SUBMENU_KEY,
+    PLATFORM_SUBMENU_KEY,
+    IMAGE_SUBMENU_KEY,
+  ]);
 
   const brandSubtitle = isAdmin ? 'Admin' : user?.tenant ?? 'Tenant';
   const params = useParams();
@@ -181,7 +188,9 @@ export function AppLayout() {
           onOpenChange={setOpenKeys}
           items={items}
           onClick={({ key }) => {
-            if (key === PLATFORM_SUBMENU_KEY || key === IMAGE_SUBMENU_KEY) return;
+            if (key === PLATFORM_SUBMENU_KEY || key === IMAGE_SUBMENU_KEY || key === SANDBOX_SUBMENU_KEY) {
+              return;
+            }
             navigate(key);
           }}
         />

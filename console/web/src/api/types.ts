@@ -384,6 +384,39 @@ export interface ResourceRecommendationResponse {
   excludedSandboxes?: { sandboxId: string; reason: string }[];
 }
 
+export interface ResourceRecommendationRunSummary {
+  id: string;
+  tenant?: string | null;
+  label?: string;
+  sandboxIdFilter?: string;
+  windowLabel?: string;
+  period?: { from?: string; to?: string };
+  createdByRole?: string;
+  createdByActor?: string;
+  createdAt?: string;
+  requests?: { cpu?: string; memory?: string };
+  limits?: { cpu?: string; memory?: string };
+  sampleCount?: { cpu?: number; memory?: number };
+  sandboxCount?: number;
+  sandboxCountWithMetrics?: number;
+  percentile?: number;
+}
+
+export interface ResourceRecommendationRunDetail extends ResourceRecommendationRunSummary {
+  result: ResourceRecommendationResponse;
+}
+
+export interface ResourceRecommendationRunListResponse {
+  items: ResourceRecommendationRunSummary[];
+  pagination?: {
+    page?: number;
+    pageSize?: number;
+    totalItems?: number;
+    totalPages?: number;
+    hasNextPage?: boolean;
+  };
+}
+
 export interface PlatformGrafanaSettings {
   enabled?: boolean;
   baseUrl?: string;

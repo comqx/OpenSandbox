@@ -273,6 +273,97 @@ async def image_statistics(
     )
 
 
+def _recommendation_actor(payload: dict) -> str:
+    role = payload.get("role")
+    if role == "tenant":
+        return str(payload.get("tenant") or "")
+    return "admin"
+
+
+def _recommendation_tenant_scope(request: Request, payload: dict) -> str | None:
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant = (request.query_params.get("tenant") or "").strip()
+        return tenant or None
+    require_tenant_session(payload)
+    return str(payload.get("tenant"))
+
+
+def _recommendation_period_and_filters(
+    request: Request,
+) -> tuple[datetime, datetime, str | None, str | None, str | None]:
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    window_label: str | None = None
+    if raw_from and raw_to:
+        period_from = _parse_period_param(raw_from, "from")
+        period_to = _parse_period_param(raw_to, "to")
+        if period_from >= period_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+            )
+    else:
+        window_label = (request.query_params.get("window") or "7d").strip()
+        try:
+            period_from, period_to = window_to_period(window_label)
+        except RecommendationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+
+    label = (request.query_params.get("label") or "").strip()
+    if len(label) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
+        )
+    sandbox_id = (request.query_params.get("sandboxId") or "").strip()
+    if len(sandbox_id) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_SANDBOX_ID", "message": "sandboxId query is longer than 200 characters"},
+        )
+    return period_from, period_to, label or None, sandbox_id or None, window_label
+
+
+async def _maybe_reconcile_history(
+    request: Request,
+    settings,
+    payload: dict,
+    tenant_filter: str | None,
+) -> None:
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+
+def _raise_recommendation_error(exc: RecommendationError) -> None:
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    if exc.code in (
+        "INVALID_WINDOW",
+        "SANDBOX_LIMIT_EXCEEDED",
+        "INVALID_PROMQL_LABEL",
+        "PROMETHEUS_URL_INVALID",
+        "INVALID_SETTINGS",
+    ):
+        status_code = status.HTTP_400_BAD_REQUEST
+    elif exc.code in ("INSUFFICIENT_DATA",):
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    elif exc.code == "COMPUTE_TIMEOUT":
+        status_code = status.HTTP_504_GATEWAY_TIMEOUT
+    elif exc.code == "HISTORY_UNAVAILABLE":
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": exc.message},
+    ) from exc
+
+
 def _parse_period_param(value: str | None, name: str) -> datetime:
     if not value or not value.strip():
         raise HTTPException(
@@ -299,52 +390,9 @@ async def resource_recommendations(
 ) -> dict[str, Any]:
     _history_disabled()
     settings = get_settings()
-    if payload.get("role") == "admin":
-        require_admin_session(payload)
-        tenant_filter = request.query_params.get("tenant")
-    else:
-        require_tenant_session(payload)
-        tenant_filter = str(payload.get("tenant"))
-
-    raw_from = request.query_params.get("from")
-    raw_to = request.query_params.get("to")
-    if raw_from and raw_to:
-        period_from = _parse_period_param(raw_from, "from")
-        period_to = _parse_period_param(raw_to, "to")
-        if period_from >= period_to:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
-            )
-    else:
-        window = (request.query_params.get("window") or "7d").strip()
-        try:
-            period_from, period_to = window_to_period(window)
-        except RecommendationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
-
-    if (
-        request.query_params.get("reconcile", "true").lower() != "false"
-        and settings.bff_history_reconcile_on_read
-    ):
-        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
-        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
-
-    label = (request.query_params.get("label") or "").strip()
-    if len(label) > 200:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
-        )
-    sandbox_id = (request.query_params.get("sandboxId") or "").strip()
-    if len(sandbox_id) > 200:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_SANDBOX_ID", "message": "sandboxId query is longer than 200 characters"},
-        )
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    period_from, period_to, label, sandbox_id, _window_label = _recommendation_period_and_filters(request)
+    await _maybe_reconcile_history(request, settings, payload, tenant_filter)
 
     try:
         return await asyncio.to_thread(
@@ -353,29 +401,99 @@ async def resource_recommendations(
             tenant_name=tenant_filter,
             period_from=period_from,
             period_to=period_to,
-            label=label or None,
-            sandbox_id=sandbox_id or None,
+            label=label,
+            sandbox_id=sandbox_id,
         )
     except RecommendationError as exc:
-        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        if exc.code in (
-            "INVALID_WINDOW",
-            "SANDBOX_LIMIT_EXCEEDED",
-            "INVALID_PROMQL_LABEL",
-            "PROMETHEUS_URL_INVALID",
-            "INVALID_SETTINGS",
-        ):
-            status_code = status.HTTP_400_BAD_REQUEST
-        elif exc.code in ("INSUFFICIENT_DATA",):
-            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
-        elif exc.code == "COMPUTE_TIMEOUT":
-            status_code = status.HTTP_504_GATEWAY_TIMEOUT
-        elif exc.code == "HISTORY_UNAVAILABLE":
-            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        _raise_recommendation_error(exc)
+
+
+@router.post("/resource-recommendation-runs")
+async def create_resource_recommendation_run(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    period_from, period_to, label, sandbox_id, window_label = _recommendation_period_and_filters(request)
+    await _maybe_reconcile_history(request, settings, payload, tenant_filter)
+
+    try:
+        result = await asyncio.to_thread(
+            compute_resource_recommendations,
+            settings,
+            tenant_name=tenant_filter,
+            period_from=period_from,
+            period_to=period_to,
+            label=label,
+            sandbox_id=sandbox_id,
+        )
+    except RecommendationError as exc:
+        _raise_recommendation_error(exc)
+
+    role = str(payload.get("role") or "tenant")
+    try:
+        return await asyncio.to_thread(
+            store.insert_recommendation_run,
+            settings,
+            tenant_name=tenant_filter,
+            created_by_role=role,
+            created_by_actor=_recommendation_actor(payload),
+            label=label,
+            sandbox_id_filter=sandbox_id,
+            period_from=period_from,
+            period_to=period_to,
+            window_label=window_label,
+            result=result,
+        )
+    except RuntimeError as exc:
         raise HTTPException(
-            status_code=status_code,
-            detail={"code": exc.code, "message": exc.message},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "HISTORY_UNAVAILABLE", "message": str(exc)},
         ) from exc
+
+
+@router.get("/resource-recommendation-runs")
+async def list_resource_recommendation_runs(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    page = max(1, int(request.query_params.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.query_params.get("pageSize", 20) or 20)))
+    return await asyncio.to_thread(
+        store.list_recommendation_runs,
+        settings,
+        tenant_name=tenant_filter,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/resource-recommendation-runs/{run_id}")
+async def get_resource_recommendation_run(
+    run_id: str,
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    item = await asyncio.to_thread(
+        store.get_recommendation_run,
+        settings,
+        run_id=run_id,
+        tenant_name=tenant_filter,
+    )
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": "Recommendation run not found"},
+        )
+    return item
 
 
 @router.get("/usage")

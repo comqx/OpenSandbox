@@ -533,4 +533,58 @@ export const historyApi = {
       `/api/history/resource-recommendations?${params.toString()}`,
     );
   },
+  resourceRecommendationQueryParams: (query?: {
+    window?: '7d' | '15d';
+    from?: string;
+    to?: string;
+    label?: string;
+    sandboxId?: string;
+    tenant?: string;
+  }) => {
+    const params = new URLSearchParams();
+    if (query?.from && query?.to) {
+      params.set('from', query.from);
+      params.set('to', query.to);
+    } else if (query?.window) {
+      params.set('window', query.window);
+    } else if (!query?.from) {
+      params.set('window', '7d');
+    }
+    if (query?.label) params.set('label', query.label);
+    if (query?.sandboxId) params.set('sandboxId', query.sandboxId);
+    if (query?.tenant) params.set('tenant', query.tenant);
+    return params;
+  },
+  createResourceRecommendationRun: (query?: {
+    window?: '7d' | '15d';
+    from?: string;
+    to?: string;
+    label?: string;
+    sandboxId?: string;
+    tenant?: string;
+  }) => {
+    const params = historyApi.resourceRecommendationQueryParams(query);
+    return apiRequest<import('./types').ResourceRecommendationRunDetail>(
+      `/api/history/resource-recommendation-runs?${params.toString()}`,
+      { method: 'POST' },
+    );
+  },
+  listResourceRecommendationRuns: (query?: { page?: number; pageSize?: number; tenant?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.page) params.set('page', String(query.page));
+    if (query?.pageSize) params.set('pageSize', String(query.pageSize));
+    if (query?.tenant) params.set('tenant', query.tenant);
+    const qs = params.toString();
+    return apiRequest<import('./types').ResourceRecommendationRunListResponse>(
+      `/api/history/resource-recommendation-runs${qs ? `?${qs}` : ''}`,
+    );
+  },
+  getResourceRecommendationRun: (runId: string, query?: { tenant?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.tenant) params.set('tenant', query.tenant);
+    const qs = params.toString();
+    return apiRequest<import('./types').ResourceRecommendationRunDetail>(
+      `/api/history/resource-recommendation-runs/${encodeURIComponent(runId)}${qs ? `?${qs}` : ''}`,
+    );
+  },
 };

@@ -58,6 +58,7 @@ export function SandboxHistoryPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [recLoading, setRecLoading] = useState(false);
   const [recResult, setRecResult] = useState<ResourceRecommendationResponse | null>(null);
+  const [savedRunId, setSavedRunId] = useState<string | null>(null);
 
   useEffect(() => {
     if (defaultedPeriod.current) return;
@@ -151,9 +152,10 @@ export function SandboxHistoryPage() {
 
   const loadRecommendations = async () => {
     setRecLoading(true);
+    setSavedRunId(null);
     try {
       const tenant = isAdmin ? tenantFilterToQuery(tenantFilter) : undefined;
-      const data = await historyApi.resourceRecommendations({
+      const saved = await historyApi.createResourceRecommendationRun({
         ...(periodActive && periodFrom && periodTo
           ? { from: periodFrom, to: periodTo }
           : { window: '7d' }),
@@ -161,7 +163,9 @@ export function SandboxHistoryPage() {
         ...(idQuery ? { sandboxId: idQuery } : {}),
         ...(tenant ? { tenant } : {}),
       });
-      setRecResult(data);
+      setRecResult(saved.result);
+      setSavedRunId(saved.id);
+      message.success('推荐已计算并保存');
     } catch (e) {
       setRecResult(null);
       message.error(e instanceof Error ? e.message : '资源推荐计算失败');
@@ -178,8 +182,23 @@ export function SandboxHistoryPage() {
     applyDayRange(range);
   };
 
+  const sandboxDetailPath = (r: SandboxHistoryItem) =>
+    isAdmin
+      ? `/sandboxes/${r.sandboxId}?tenant=${encodeURIComponent(r.tenant ?? '')}`
+      : `/sandboxes/${r.sandboxId}`;
+
+  const sandboxMonitorLogsPath = (r: SandboxHistoryItem) => {
+    const base = sandboxDetailPath(r);
+    return `${base}${base.includes('?') ? '&' : '?'}tab=logs`;
+  };
+
   const columns: ColumnsType<SandboxHistoryItem> = [
-    { title: '沙箱 ID', dataIndex: 'sandboxId', ellipsis: true },
+    {
+      title: '沙箱 ID',
+      dataIndex: 'sandboxId',
+      ellipsis: true,
+      render: (id: string, r) => <Link to={sandboxDetailPath(r)}>{id}</Link>,
+    },
     ...(isAdmin
       ? [
           {
@@ -227,23 +246,15 @@ export function SandboxHistoryPage() {
     {
       title: '操作',
       key: 'actions',
-      render: (_, r) => (
-        <Link
-          to={
-            isAdmin
-              ? `/sandboxes/${r.sandboxId}?tenant=${encodeURIComponent(r.tenant ?? '')}`
-              : `/sandboxes/${r.sandboxId}`
-          }
-        >
-          详情
-        </Link>
-      ),
+      width: 120,
+      fixed: 'right',
+      render: (_, r) => <Link to={sandboxMonitorLogsPath(r)}>监控日志</Link>,
     },
   ];
 
   return (
     <div>
-      <Typography.Title level={4}>沙箱 · 申请历史</Typography.Title>
+      <Typography.Title level={4}>申请历史</Typography.Title>
       <Typography.Paragraph type="secondary">
         启用：BFF 配置 <code>BFF_HISTORY_ENABLED=true</code> 且 <code>BFF_HISTORY_DATABASE_URL</code> 与 Server
         同库；SDK 直连创建也要入库时，在 Server 打开 <code>[store.lifecycle_audit] enabled = true</code>（需
@@ -283,6 +294,21 @@ export function SandboxHistoryPage() {
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
             未限定时间：列表展示全部历史；推荐计算默认使用最近 7 天滚动窗口。
           </Typography.Text>
+        )}
+        {savedRunId && (
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginTop: 12 }}
+            message={
+              <span>
+                已保存至资源推荐记录。{' '}
+                <Link to={`/history/resource-recommendations/${savedRunId}`}>查看详情</Link>
+                {' · '}
+                <Link to="/history/resource-recommendations">全部记录</Link>
+              </span>
+            }
+          />
         )}
         {recResult?.requests && recResult.limits && (
           <>

@@ -26,6 +26,7 @@ import { PoolsPage } from './pages/PoolsPage';
 import { SandboxCreatePage } from './pages/SandboxCreatePage';
 import { SandboxDetailPage } from './pages/SandboxDetailPage';
 import { SandboxHistoryPage } from './pages/SandboxHistoryPage';
+import { SandboxResourceRecommendationPage } from './pages/SandboxResourceRecommendationPage';
 import { MirrorAccelPage } from './pages/MirrorAccelPage';
 import { SandboxImageBuildPage } from './pages/SandboxImageBuildPage';
 import { SandboxImageListPage } from './pages/SandboxImageListPage';
@@ -84,6 +85,11 @@ export default function App() {
               <Route path="sandboxes/new" element={<SandboxCreatePage />} />
               <Route path="sandboxes/:id/shell" element={<SandboxShellPage />} />
               <Route path="history/sandboxes" element={<SandboxHistoryPage />} />
+              <Route path="history/resource-recommendations" element={<SandboxResourceRecommendationPage />} />
+              <Route
+                path="history/resource-recommendations/:runId"
+                element={<SandboxResourceRecommendationPage />}
+              />
               <Route path="images/list" element={<SandboxImageListPage />} />
               <Route path="history/images" element={<SandboxImageStatsPage />} />
               <Route path="history/mirror-accel" element={<MirrorAccelPage />} />

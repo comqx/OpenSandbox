@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -159,6 +160,29 @@ def _ensure_schema(pool: ConnectionPool) -> None:
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_console_sandbox_image_catalog_uri
                 ON console_sandbox_image_catalog (image_uri)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sandbox_resource_recommendation_runs (
+                id TEXT PRIMARY KEY,
+                tenant_name TEXT,
+                created_by_role TEXT NOT NULL,
+                created_by_actor TEXT NOT NULL DEFAULT '',
+                label TEXT,
+                sandbox_id_filter TEXT,
+                period_from TIMESTAMPTZ NOT NULL,
+                period_to TIMESTAMPTZ NOT NULL,
+                window_label TEXT,
+                result JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sandbox_resource_recommendation_runs_tenant_created
+                ON sandbox_resource_recommendation_runs (tenant_name, created_at DESC)
             """
         )
         conn.execute(
@@ -1826,3 +1850,166 @@ def _empty_page(page: int, page_size: int) -> dict[str, Any]:
         "totalPages": 1,
         "hasNextPage": False,
     }
+
+
+def _recommendation_run_to_item(row: dict[str, Any]) -> dict[str, Any]:
+    result = row.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            result = {}
+    if not isinstance(result, dict):
+        result = {}
+    period_from = row.get("period_from")
+    period_to = row.get("period_to")
+    created_at = row.get("created_at")
+    return {
+        "id": row["id"],
+        "tenant": row.get("tenant_name"),
+        "label": row.get("label") or "",
+        "sandboxIdFilter": row.get("sandbox_id_filter") or "",
+        "windowLabel": row.get("window_label") or "",
+        "period": {
+            "from": period_from.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if isinstance(period_from, datetime)
+            else None,
+            "to": period_to.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if isinstance(period_to, datetime)
+            else None,
+        },
+        "createdByRole": row.get("created_by_role"),
+        "createdByActor": row.get("created_by_actor") or "",
+        "createdAt": created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if isinstance(created_at, datetime)
+        else None,
+        "requests": result.get("requests"),
+        "limits": result.get("limits"),
+        "sampleCount": result.get("sampleCount"),
+        "sandboxCount": result.get("sandboxCount"),
+        "sandboxCountWithMetrics": result.get("sandboxCountWithMetrics"),
+        "percentile": result.get("percentile"),
+    }
+
+
+def insert_recommendation_run(
+    settings: Settings,
+    *,
+    tenant_name: str | None,
+    created_by_role: str,
+    created_by_actor: str,
+    label: str | None,
+    sandbox_id_filter: str | None,
+    period_from: datetime,
+    period_to: datetime,
+    window_label: str | None,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    del settings
+    if _pool is None:
+        raise RuntimeError("History database is not available")
+    run_id = str(uuid.uuid4())
+    period_from = period_from.astimezone(timezone.utc)
+    period_to = period_to.astimezone(timezone.utc)
+    with _pool.connection() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO sandbox_resource_recommendation_runs (
+                id, tenant_name, created_by_role, created_by_actor,
+                label, sandbox_id_filter, period_from, period_to, window_label, result
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            RETURNING *
+            """,
+            (
+                run_id,
+                tenant_name,
+                created_by_role,
+                created_by_actor,
+                label,
+                sandbox_id_filter,
+                period_from,
+                period_to,
+                window_label,
+                json.dumps(result),
+            ),
+        ).fetchone()
+    if not row:
+        raise RuntimeError("Failed to insert recommendation run")
+    item = _recommendation_run_to_item(row)
+    return {**item, "result": result}
+
+
+def list_recommendation_runs(
+    settings: Settings,
+    *,
+    tenant_name: str | None,
+    page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    del settings
+    if _pool is None:
+        return {"items": [], "pagination": _empty_page(page, page_size)}
+
+    where = "WHERE 1=1"
+    params: list[Any] = []
+    if tenant_name:
+        where += " AND tenant_name = %s"
+        params.append(tenant_name)
+
+    offset = (page - 1) * page_size
+    with _pool.connection() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) AS c FROM sandbox_resource_recommendation_runs {where}",
+            params,
+        ).fetchone()["c"]
+        rows = conn.execute(
+            f"""
+            SELECT * FROM sandbox_resource_recommendation_runs
+            {where}
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            [*params, page_size, offset],
+        ).fetchall()
+
+    total_items = int(total)
+    total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
+    return {
+        "items": [_recommendation_run_to_item(r) for r in rows],
+        "pagination": {
+            "page": page,
+            "pageSize": page_size,
+            "totalItems": total_items,
+            "totalPages": total_pages,
+            "hasNextPage": page < total_pages,
+        },
+    }
+
+
+def get_recommendation_run(
+    settings: Settings,
+    *,
+    run_id: str,
+    tenant_name: str | None,
+) -> dict[str, Any] | None:
+    del settings
+    if _pool is None:
+        return None
+    with _pool.connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM sandbox_resource_recommendation_runs WHERE id = %s",
+            (run_id,),
+        ).fetchone()
+    if not row:
+        return None
+    if tenant_name and row.get("tenant_name") != tenant_name:
+        return None
+    result = row.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            result = {}
+    item = _recommendation_run_to_item(row)
+    return {**item, "result": result if isinstance(result, dict) else {}}

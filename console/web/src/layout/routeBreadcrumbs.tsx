@@ -41,13 +41,14 @@ export function buildRouteBreadcrumbs(
   const home = { title: crumbLink('/', '概览') };
   const runningListPath = isAdmin ? '/admin/sandboxes' : '/sandboxes';
   const runningLabel = isAdmin ? '沙箱（全局）' : '沙箱';
+  const sandboxGroup = { title: '沙箱' };
 
   if (pathname === '/' || pathname === '') {
     return [{ title: '概览' }];
   }
 
   if (pathname === runningListPath) {
-    return [home, { title: runningLabel }];
+    return [home, sandboxGroup, { title: runningLabel }];
   }
 
   if (pathname === '/sandboxes/new') {
@@ -63,7 +64,20 @@ export function buildRouteBreadcrumbs(
   }
 
   if (pathname === '/history/sandboxes') {
-    return [home, { title: '申请历史' }];
+    return [home, sandboxGroup, { title: '申请历史' }];
+  }
+
+  if (pathname === '/history/resource-recommendations') {
+    return [home, sandboxGroup, { title: '资源推荐' }];
+  }
+
+  if (pathname.startsWith('/history/resource-recommendations/')) {
+    return [
+      home,
+      sandboxGroup,
+      { title: crumbLink('/history/resource-recommendations', '资源推荐') },
+      { title: '记录详情' },
+    ];
   }
 
   const imageGroup = { title: '沙箱镜像管理' };

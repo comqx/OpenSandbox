@@ -104,10 +104,13 @@ export function AdminSandboxesPage() {
     },
     {
       title: '操作',
+      key: 'actions',
+      width: 220,
+      fixed: 'right',
       render: (_, r) => (
         <Space>
           <Link to={`/sandboxes/${r.id}?tenant=${encodeURIComponent(r.tenant ?? '')}&tab=logs`}>
-            日志
+            监控日志
           </Link>
           <Link
             to={`/diagnostics?sandboxId=${encodeURIComponent(r.id)}&tenant=${encodeURIComponent(r.tenant ?? '')}`}
