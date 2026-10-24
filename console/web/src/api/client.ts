@@ -511,4 +511,19 @@ export const historyApi = {
       `/api/history/images/stats${qs ? `?${qs}` : ''}`,
     );
   },
+  resourceRecommendations: (query?: {
+    window?: '7d' | '15d';
+    label?: string;
+    sandboxId?: string;
+    tenant?: string;
+  }) => {
+    const params = new URLSearchParams();
+    params.set('window', query?.window ?? '7d');
+    if (query?.label) params.set('label', query.label);
+    if (query?.sandboxId) params.set('sandboxId', query.sandboxId);
+    if (query?.tenant) params.set('tenant', query.tenant);
+    return apiRequest<import('./types').ResourceRecommendationResponse>(
+      `/api/history/resource-recommendations?${params.toString()}`,
+    );
+  },
 };

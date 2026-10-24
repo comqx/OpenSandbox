@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import { SearchOutlined } from '@ant-design/icons';
-import { Alert, Card, Col, Input, Row, Space, Statistic, Table, Typography } from 'antd';
+import { Alert, Button, Card, Col, Input, Row, Select, Space, Statistic, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -24,7 +24,11 @@ import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../componen
 import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
-import type { SandboxHistoryItem, SandboxHistoryStats } from '../api/types';
+import type {
+  ResourceRecommendationResponse,
+  SandboxHistoryItem,
+  SandboxHistoryStats,
+} from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { formatDateTime, formatDuration } from '../utils/format';
 import { currentMonthRangeUtc, monthRangeToUsageQuery, usageQueryToDayRange } from '../utils/usagePeriod';
@@ -52,6 +56,9 @@ export function SandboxHistoryPage() {
   const [labelQuery, setLabelQuery] = useState('');
   const [page, setPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
+  const [recWindow, setRecWindow] = useState<'7d' | '15d'>('7d');
+  const [recLoading, setRecLoading] = useState(false);
+  const [recResult, setRecResult] = useState<ResourceRecommendationResponse | null>(null);
 
   useEffect(() => {
     if (defaultedPeriod.current) return;
@@ -141,6 +148,25 @@ export function SandboxHistoryPage() {
     next.delete('to');
     next.set('period', 'all');
     setSearchParams(next, { replace: true });
+  };
+
+  const loadRecommendations = async () => {
+    setRecLoading(true);
+    try {
+      const tenant = isAdmin ? tenantFilterToQuery(tenantFilter) : undefined;
+      const data = await historyApi.resourceRecommendations({
+        window: recWindow,
+        ...(labelQuery ? { label: labelQuery } : {}),
+        ...(idQuery ? { sandboxId: idQuery } : {}),
+        ...(tenant ? { tenant } : {}),
+      });
+      setRecResult(data);
+    } catch (e) {
+      setRecResult(null);
+      message.error(e instanceof Error ? e.message : '资源推荐计算失败');
+    } finally {
+      setRecLoading(false);
+    }
   };
 
   const onPeriodRangeChange = (range: [Dayjs, Dayjs] | null) => {
@@ -245,6 +271,50 @@ export function SandboxHistoryPage() {
         ) : (
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
             未限定时间，展示全部历史记录。
+          </Typography.Text>
+        )}
+      </Card>
+
+      <Card size="small" title="资源推荐（监控分位数）" style={{ marginBottom: 16 }}>
+        <Space wrap align="center">
+          <Select
+            value={recWindow}
+            onChange={setRecWindow}
+            style={{ width: 120 }}
+            options={[
+              { value: '7d', label: '最近 7 天' },
+              { value: '15d', label: '最近 15 天' },
+            ]}
+          />
+          <Button type="primary" loading={recLoading} onClick={() => void loadRecommendations()}>
+            计算推荐
+          </Button>
+          <Typography.Text type="secondary">
+            按当前租户 / 标签 / ID 筛选；统计窗口为上方选择的「最近 7/15 天（UTC 滚动）」，与列表时间筛选独立。含已结束沙箱；需在系统设置启用
+            Prometheus。
+          </Typography.Text>
+        </Space>
+        {recResult?.requests && recResult.limits && (
+          <Row gutter={16} style={{ marginTop: 16 }}>
+            <Col span={6}>
+              <Statistic title="requests CPU" value={recResult.requests.cpu ?? '—'} />
+            </Col>
+            <Col span={6}>
+              <Statistic title="limits CPU" value={recResult.limits.cpu ?? '—'} />
+            </Col>
+            <Col span={6}>
+              <Statistic title="requests 内存" value={recResult.requests.memory ?? '—'} />
+            </Col>
+            <Col span={6}>
+              <Statistic title="limits 内存" value={recResult.limits.memory ?? '—'} />
+            </Col>
+          </Row>
+        )}
+        {recResult?.sampleCount && (
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+            样本：CPU {recResult.sampleCount.cpu ?? 0} · 内存 {recResult.sampleCount.memory ?? 0} · 沙箱{' '}
+            {recResult.sandboxCountWithMetrics ?? 0}/{recResult.sandboxCount ?? 0} · P
+            {recResult.percentile ?? 95}
           </Typography.Text>
         )}
       </Card>

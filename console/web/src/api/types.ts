@@ -358,6 +358,32 @@ export interface SandboxImageCatalogInput {
   maintainer?: string;
 }
 
+export interface ResourceRecommendationSettings {
+  enabled?: boolean;
+  prometheusUrl?: string;
+  memoryPromql?: string;
+  cpuPromql?: string;
+  percentile?: number;
+  cpuLimitRatio?: number;
+  cpuLimitFloor?: string;
+  memoryLimitRatio?: number;
+  memoryLimitFloor?: string;
+}
+
+export interface ResourceRecommendationResponse {
+  period?: { from?: string; to?: string };
+  sandboxCount?: number;
+  sandboxCountWithMetrics?: number;
+  sampleCount?: { cpu?: number; memory?: number };
+  percentile?: number;
+  cpuBaseCores?: number;
+  memoryBaseBytes?: number;
+  requests?: { cpu?: string; memory?: string };
+  limits?: { cpu?: string; memory?: string };
+  aggregation?: string;
+  excludedSandboxes?: { sandboxId: string; reason: string }[];
+}
+
 export interface PlatformGrafanaSettings {
   enabled?: boolean;
   baseUrl?: string;
@@ -372,6 +398,7 @@ export interface PlatformGrafanaSettings {
   datasourceUid?: string;
   authProxyEnabled?: boolean;
   authProxyUserHeader?: string;
+  resourceRecommendation?: ResourceRecommendationSettings;
   persisted?: boolean;
   source?: string;
 }

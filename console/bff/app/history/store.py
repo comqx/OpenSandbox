@@ -807,6 +807,70 @@ def _overlap_seconds_in_period(
     return (overlap_end - overlap_start).total_seconds()
 
 
+def effective_lifecycle_interval(
+    row: dict[str, Any],
+    *,
+    period_from: datetime,
+    period_to: datetime,
+    now: datetime,
+) -> tuple[datetime, datetime] | None:
+    """Active sandbox lifetime intersected with [period_from, period_to)."""
+    start = _row_lifecycle_start(row)
+    if start is None:
+        return None
+    end = _lifecycle_end_at(row, period_to=period_to, now=now)
+    overlap_start = max(start, period_from.astimezone(timezone.utc))
+    overlap_end = min(end, period_to.astimezone(timezone.utc))
+    if overlap_end <= overlap_start:
+        return None
+    return overlap_start, overlap_end
+
+
+def list_recommendation_candidates(
+    settings: Settings,
+    *,
+    tenant_name: str | None,
+    period_from: datetime,
+    period_to: datetime,
+    label: str | None = None,
+    sandbox_id: str | None = None,
+    max_rows: int = 500,
+) -> list[dict[str, Any]]:
+    """History rows overlapping the period (includes terminated sandboxes)."""
+    if _pool is None:
+        return []
+
+    period_from = period_from.astimezone(timezone.utc)
+    period_to = period_to.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    where = """
+        WHERE COALESCE(h.lifecycle_created_at, h.first_recorded_at) < %s
+          AND COALESCE(h.ended_at, h.deleted_at, %s) > %s
+    """
+    params: list[Any] = [period_to, now, period_from]
+    if tenant_name:
+        where += " AND h.tenant_name = %s"
+        params.append(tenant_name)
+    label_sql, label_params = _label_where("h", label)
+    where += label_sql
+    params.extend(label_params)
+    id_sql, id_params = _sandbox_id_where("h", sandbox_id)
+    where += id_sql
+    params.extend(id_params)
+
+    limit_sql = ""
+    if max_rows > 0:
+        limit_sql = " LIMIT %s"
+        params.append(max_rows + 1)
+
+    with _pool.connection() as conn:
+        rows = conn.execute(
+            f"SELECT h.* FROM sandbox_lifecycle_history h {where}{limit_sql}",
+            params,
+        ).fetchall()
+    return list(rows)
+
+
 def _display_wall_clock_seconds(row: dict[str, Any]) -> int | None:
     start = _row_lifecycle_start(row)
     if start is None:

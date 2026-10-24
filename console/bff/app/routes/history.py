@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.config import get_settings
 from app.deps import get_session_payload, require_admin_session, require_tenant_session
 from app.history import reconcile, store
+from app.resource_recommendation import RecommendationError, compute_resource_recommendations, window_to_period
 
 router = APIRouter(prefix="/history", tags=["history"])
 
@@ -289,6 +290,92 @@ def _parse_period_param(value: str | None, name: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+@router.get("/resource-recommendations")
+async def resource_recommendations(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    if raw_from and raw_to:
+        period_from = _parse_period_param(raw_from, "from")
+        period_to = _parse_period_param(raw_to, "to")
+        if period_from >= period_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+            )
+    else:
+        window = (request.query_params.get("window") or "7d").strip()
+        try:
+            period_from, period_to = window_to_period(window)
+        except RecommendationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    label = (request.query_params.get("label") or "").strip()
+    if len(label) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
+        )
+    sandbox_id = (request.query_params.get("sandboxId") or "").strip()
+    if len(sandbox_id) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_SANDBOX_ID", "message": "sandboxId query is longer than 200 characters"},
+        )
+
+    try:
+        return await asyncio.to_thread(
+            compute_resource_recommendations,
+            settings,
+            tenant_name=tenant_filter,
+            period_from=period_from,
+            period_to=period_to,
+            label=label or None,
+            sandbox_id=sandbox_id or None,
+        )
+    except RecommendationError as exc:
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        if exc.code in (
+            "INVALID_WINDOW",
+            "SANDBOX_LIMIT_EXCEEDED",
+            "INVALID_PROMQL_LABEL",
+            "PROMETHEUS_URL_INVALID",
+            "INVALID_SETTINGS",
+        ):
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif exc.code in ("INSUFFICIENT_DATA",):
+            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        elif exc.code == "COMPUTE_TIMEOUT":
+            status_code = status.HTTP_504_GATEWAY_TIMEOUT
+        elif exc.code == "HISTORY_UNAVAILABLE":
+            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
 
 
 @router.get("/usage")

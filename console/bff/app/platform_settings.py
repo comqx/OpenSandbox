@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.config import Settings
+from app.prometheus_ssrf import validate_prometheus_base_url
+from app.recommendation_defaults import DEFAULT_CPU_PROMQL, DEFAULT_MEMORY_PROMQL
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,18 @@ GRAFANA_SETTING_KEYS = (
     "authProxyEnabled",
     "authProxyUserHeader",
     "embedExpandRows",
+)
+
+RESOURCE_RECOMMENDATION_KEYS = (
+    "enabled",
+    "prometheusUrl",
+    "memoryPromql",
+    "cpuPromql",
+    "percentile",
+    "cpuLimitRatio",
+    "cpuLimitFloor",
+    "memoryLimitRatio",
+    "memoryLimitFloor",
 )
 
 
@@ -69,7 +83,7 @@ def init_platform_settings(settings: Settings) -> None:
             try:
                 data = json.loads(file_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    _OVERRIDES = {k: data[k] for k in GRAFANA_SETTING_KEYS if k in data}
+                    _OVERRIDES = data
             except (OSError, json.JSONDecodeError) as exc:
                 logger.warning("Failed to read platform settings file %s: %s", path, exc)
         logger.info("Platform settings persistence: file %s", path)
@@ -79,7 +93,7 @@ def persistence_available() -> bool:
     return _PERSIST_MODE in ("file", "db")
 
 
-def _defaults(settings: Settings) -> dict[str, Any]:
+def _grafana_defaults(settings: Settings) -> dict[str, Any]:
     return {
         "enabled": settings.bff_grafana_enabled,
         "baseUrl": settings.bff_grafana_base_url.rstrip("/"),
@@ -98,17 +112,48 @@ def _defaults(settings: Settings) -> dict[str, Any]:
     }
 
 
+def _resource_recommendation_defaults() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "prometheusUrl": "",
+        "memoryPromql": DEFAULT_MEMORY_PROMQL,
+        "cpuPromql": DEFAULT_CPU_PROMQL,
+        "percentile": 95,
+        "cpuLimitRatio": 2.0,
+        "cpuLimitFloor": "100m",
+        "memoryLimitRatio": 1.5,
+        "memoryLimitFloor": "200Mi",
+    }
+
+
+def _merged_resource_recommendation() -> dict[str, Any]:
+    merged = _resource_recommendation_defaults()
+    nested = _OVERRIDES.get("resourceRecommendation")
+    if isinstance(nested, dict):
+        for key in RESOURCE_RECOMMENDATION_KEYS:
+            if key in nested:
+                merged[key] = nested[key]
+    return merged
+
+
+def get_resource_recommendation_settings(settings: Settings) -> dict[str, Any]:
+    """Effective resource recommendation settings (defaults + persisted overrides)."""
+    _ = settings
+    return _merged_resource_recommendation()
+
+
 def get_platform_settings(settings: Settings) -> dict[str, Any]:
-    merged = _defaults(settings)
+    merged = _grafana_defaults(settings)
     merged.update({k: v for k, v in _OVERRIDES.items() if k in GRAFANA_SETTING_KEYS})
     return {
         **merged,
+        "resourceRecommendation": _merged_resource_recommendation(),
         "persisted": persistence_available(),
         "source": _PERSIST_MODE,
     }
 
 
-def _validate_patch(body: dict[str, Any]) -> dict[str, Any]:
+def _validate_grafana_patch(body: dict[str, Any]) -> dict[str, Any]:
     patch: dict[str, Any] = {}
     if "enabled" in body:
         patch["enabled"] = bool(body["enabled"])
@@ -153,14 +198,70 @@ def _validate_patch(body: dict[str, Any]) -> dict[str, Any]:
     return patch
 
 
+def _validate_resource_recommendation_patch(body: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        raise ValueError("resourceRecommendation must be an object")
+    patch: dict[str, Any] = {}
+    if "enabled" in body:
+        patch["enabled"] = bool(body["enabled"])
+    if "prometheusUrl" in body:
+        raw = str(body["prometheusUrl"]).strip()
+        if raw:
+            patch["prometheusUrl"] = validate_prometheus_base_url(raw)
+        else:
+            patch["prometheusUrl"] = ""
+    for key in ("memoryPromql", "cpuPromql"):
+        if key in body:
+            val = str(body[key]).strip()
+            if not val:
+                raise ValueError(f"{key} must be non-empty when set")
+            if "{{namespace}}" not in val or "{{pod}}" not in val:
+                raise ValueError(f"{key} must include {{namespace}} and {{pod}} placeholders")
+            patch[key] = val
+    if "percentile" in body:
+        p = float(body["percentile"])
+        if p <= 0 or p > 100:
+            raise ValueError("percentile must be between 0 and 100")
+        patch["percentile"] = p
+    if "cpuLimitRatio" in body:
+        ratio = float(body["cpuLimitRatio"])
+        if ratio <= 0:
+            raise ValueError("cpuLimitRatio must be positive")
+        patch["cpuLimitRatio"] = ratio
+    if "memoryLimitRatio" in body:
+        ratio = float(body["memoryLimitRatio"])
+        if ratio <= 0:
+            raise ValueError("memoryLimitRatio must be positive")
+        patch["memoryLimitRatio"] = ratio
+    if "cpuLimitFloor" in body or "memoryLimitFloor" in body:
+        from app.resource_recommendation import parse_cpu_cores, parse_memory_bytes
+
+    if "cpuLimitFloor" in body:
+        floor = str(body["cpuLimitFloor"]).strip()
+        parse_cpu_cores(floor)
+        patch["cpuLimitFloor"] = floor
+    if "memoryLimitFloor" in body:
+        floor = str(body["memoryLimitFloor"]).strip()
+        parse_memory_bytes(floor)
+        patch["memoryLimitFloor"] = floor
+    return patch
+
+
 def save_platform_settings(settings: Settings, body: dict[str, Any]) -> dict[str, Any]:
     global _OVERRIDES
     if not persistence_available():
         raise RuntimeError(
             "Platform settings are read-only: enable BFF history DB or set BFF_PLATFORM_SETTINGS_PATH",
         )
-    patch = _validate_patch(body)
-    _OVERRIDES = {**_OVERRIDES, **patch}
+    grafana_patch = _validate_grafana_patch(body)
+    _OVERRIDES = {**_OVERRIDES, **grafana_patch}
+
+    if "resourceRecommendation" in body:
+        rec_patch = _validate_resource_recommendation_patch(body["resourceRecommendation"])
+        current = _OVERRIDES.get("resourceRecommendation")
+        if not isinstance(current, dict):
+            current = {}
+        _OVERRIDES["resourceRecommendation"] = {**current, **rec_patch}
 
     if _PERSIST_MODE == "db":
         from app.history.store import save_platform_settings_to_db

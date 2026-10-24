@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Button, Card, Form, Input, Select, Space, Switch, Typography, message } from 'antd';
+import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Typography, message } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '../../auth/AuthContext';
@@ -151,6 +151,55 @@ export function SystemSettingsPage() {
               <Typography.Text type="secondary">持久化：{meta.source}</Typography.Text>
             )}
           </Space>
+        </Form>
+      </Card>
+
+      <Card loading={loading} title="资源推荐（Prometheus）" style={{ marginTop: 16 }}>
+        <Typography.Paragraph type="secondary">
+          按历史沙箱监控数据做跨沙箱 pooled 分位数，生成 requests / limits 建议。PromQL 须包含{' '}
+          <code>{'{{namespace}}'}</code> 与 <code>{'{{pod}}'}</code>（Pod 名为沙箱 ID 加 <code>-0</code>）。
+        </Typography.Paragraph>
+        <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
+          <Form.Item name={['resourceRecommendation', 'enabled']} label="启用资源推荐" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name={['resourceRecommendation', 'prometheusUrl']} label="Prometheus 查询地址">
+            <Input placeholder="http://prometheus:9090" />
+          </Form.Item>
+          <Form.Item
+            name={['resourceRecommendation', 'memoryPromql']}
+            label="内存 PromQL"
+            extra="默认 cAdvisor working set（bytes）"
+          >
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item
+            name={['resourceRecommendation', 'cpuPromql']}
+            label="CPU PromQL"
+            extra="默认容器 CPU rate（cores）"
+          >
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item name={['resourceRecommendation', 'percentile']} label="分位数">
+            <InputNumber min={1} max={100} style={{ width: 120 }} />
+          </Form.Item>
+          <Space wrap size="large">
+            <Form.Item name={['resourceRecommendation', 'cpuLimitRatio']} label="CPU limits 倍数">
+              <InputNumber min={0.1} step={0.1} style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item name={['resourceRecommendation', 'cpuLimitFloor']} label="CPU limits 下限">
+              <Input placeholder="100m" style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item name={['resourceRecommendation', 'memoryLimitRatio']} label="内存 limits 倍数">
+              <InputNumber min={0.1} step={0.1} style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item name={['resourceRecommendation', 'memoryLimitFloor']} label="内存 limits 下限">
+              <Input placeholder="200Mi" style={{ width: 120 }} />
+            </Form.Item>
+          </Space>
+          <Button type="primary" loading={saving} onClick={() => void onSave()}>
+            保存
+          </Button>
         </Form>
       </Card>
     </div>

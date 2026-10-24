@@ -44,6 +44,8 @@ Usage CPU·秒 and 内存·Gi·秒 skip rows that have no create-time `resourceL
 
 `metadata` is the sandbox label map. The Server writes it on lifecycle create and delete. History list accepts `label`: a case-insensitive substring matched against each key, value, or `key=value`. Space-separated terms are AND. Rows created before that Server change have no labels unless `create_request.metadata` was stored by the console. The same list accepts `sandboxId`: a case-insensitive substring of the sandbox id (`%` and `_` are matched literally).
 
+`GET /api/history/resource-recommendations` uses the same tenant scope and optional `label` / `sandboxId` filters. Query `window=7d|15d` (default `7d`) selects a rolling UTC window, or pass `from` and `to` (UTC, `to` exclusive) like other history endpoints. Optional `reconcile=false` skips the lifecycle reconcile pass when `BFF_HISTORY_RECONCILE_ON_READ` is enabled. The BFF loads matching history rows (including terminated sandboxes), fetches Prometheus range samples for each sandbox’s active interval (Pod `{sandboxId}-0`), pools all samples, and returns pooled percentile-based **requests** (baseline) and **limits** (ratio × baseline with floors). Configure Prometheus URL, PromQL templates, percentile, and limit ratios in **Admin → 系统设置 → 资源推荐**.
+
 ## API
 
 See [03-bff-api.md](./03-bff-api.md) and `/api/history/*`.
