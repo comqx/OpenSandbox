@@ -32,6 +32,18 @@ def test_substitute_promql():
     assert substitute_promql(q, namespace="tenant-a", pod="sbx-1-0") == 'metric{namespace="tenant-a",pod="sbx-1-0"}'
 
 
+def test_substitute_promql_pod_regex_multi():
+    q = 'metric{namespace="{{namespace}}",pod=~"{{pod_regex}}"}'
+    out = substitute_promql(q, namespace="tenant-a", pods=["a-0", "b-0"])
+    assert out == 'metric{namespace="tenant-a",pod=~"a-0|b-0"}'
+
+
+def test_substitute_promql_legacy_template_batch():
+    q = 'metric{namespace="{{namespace}}",pod="{{pod}}"}'
+    out = substitute_promql(q, namespace="tenant-a", pods=["a-0", "b-0"])
+    assert out == 'metric{namespace="tenant-a",pod=~"a-0|b-0"}'
+
+
 def test_substitute_promql_escapes_quotes():
     q = 'metric{namespace="{{namespace}}",pod="{{pod}}"}'
     with pytest.raises(RecommendationError):

@@ -13,9 +13,9 @@
 # limitations under the License.
 
 DEFAULT_MEMORY_PROMQL = """max by (pod) (
-  container_memory_working_set_bytes{namespace="{{namespace}}",pod="{{pod}}",container!="",container!="POD"}
+  container_memory_working_set_bytes{namespace="{{namespace}}",pod=~"{{pod_regex}}",container!="",container!="POD"}
 )"""
 
 DEFAULT_CPU_PROMQL = """sum by (pod) (
-  rate(container_cpu_usage_seconds_total{namespace="{{namespace}}",pod="{{pod}}",container!="",container!="POD"}[2m])
+  rate(container_cpu_usage_seconds_total{namespace="{{namespace}}",pod=~"{{pod_regex}}",container!="",container!="POD"}[2m])
 )"""

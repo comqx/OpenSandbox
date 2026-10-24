@@ -17,10 +17,11 @@ from __future__ import annotations
 import logging
 import math
 import re
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urljoin
 
 import httpx
 
@@ -32,12 +33,13 @@ from app.prometheus_ssrf import validate_prometheus_base_url
 
 logger = logging.getLogger(__name__)
 
-_MAX_SANDBOXES = 500
+_MAX_SANDBOXES = 2000
+_PODS_PER_PROM_BATCH = 30
 _MIN_SAMPLES = 30
 _PROM_STEP = "60s"
-_PROM_QUERY_TIMEOUT = 30.0
-_COMPUTE_DEADLINE_SECONDS = 120.0
-_FETCH_WORKERS = 8
+_PROM_QUERY_TIMEOUT = 60.0
+_COMPUTE_DEADLINE_SECONDS = 180.0
+_FETCH_WORKERS = 4
 
 _CPU_QUANT_MILLICORES = 50
 _MEM_QUANT_MIB = 64
@@ -73,16 +75,62 @@ def _validate_promql_label(name: str, value: str) -> None:
         raise RecommendationError("INVALID_PROMQL_LABEL", f"{name} contains invalid characters")
 
 
-def substitute_promql(template: str, *, namespace: str, pod: str) -> str:
+def _pod_names_for_substitute(*, pod: str | None, pods: list[str] | None) -> list[str]:
+    if pods:
+        return list(pods)
+    if pod:
+        return [pod]
+    raise RecommendationError("INVALID_PROMQL_LABEL", "pod or pods is required")
+
+
+def _normalize_promql_template_for_pods(template: str, pod_names: list[str]) -> str:
+    if len(pod_names) <= 1:
+        return template
+    normalized = template
+    if 'pod="{{pod}}"' in normalized:
+        normalized = normalized.replace('pod="{{pod}}"', 'pod=~"{{pod_regex}}"')
+    if "{{pod_regex}}" not in normalized and "{{pod}}" not in normalized:
+        raise RecommendationError(
+            "INVALID_PROMQL_LABEL",
+            "PromQL template must include {{pod_regex}} or {{pod}} for batch queries",
+        )
+    return normalized
+
+
+def _promql_label_regex(name: str) -> str:
+    """Escape RE2 metacharacters in a K8s pod name (UUID-style names stay unescaped)."""
+    out: list[str] = []
+    for ch in name:
+        if ch in r"\[]{}()+*?^.|$":
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def substitute_promql(
+    template: str,
+    *,
+    namespace: str,
+    pod: str | None = None,
+    pods: list[str] | None = None,
+) -> str:
+    pod_names = _pod_names_for_substitute(pod=pod, pods=pods)
     _validate_promql_label("namespace", namespace)
-    _validate_promql_label("pod", pod)
+    for name in pod_names:
+        _validate_promql_label("pod", name)
     ns = promql_escape_string(namespace)
-    po = promql_escape_string(pod)
-    return (
-        template.replace("{{namespace}}", ns)
-        .replace("{{pod}}", po)
-        .replace("{{pod_regex}}", re.escape(pod))
-    )
+    pod_regex = "|".join(_promql_label_regex(name) for name in pod_names)
+    tpl = _normalize_promql_template_for_pods(template, pod_names)
+    out = tpl.replace("{{namespace}}", ns).replace("{{pod_regex}}", pod_regex)
+    if "{{pod}}" in out:
+        if len(pod_names) != 1:
+            raise RecommendationError(
+                "INVALID_PROMQL_LABEL",
+                "PromQL template uses {{pod}} but multiple pods were requested; use pod=~\"{{pod_regex}}\"",
+            )
+        out = out.replace("{{pod}}", promql_escape_string(pod_names[0]))
+    return out
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -196,7 +244,34 @@ def build_requests_limits(
     }
 
 
-def _prometheus_query_range(
+def _parse_sample_value(raw: Any) -> float | None:
+    if raw in ("NaN", "+Inf", "-Inf", None):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def _values_in_interval(
+    points: list[tuple[float, float]],
+    interval_start: datetime,
+    interval_end: datetime,
+) -> list[float]:
+    start_ts = interval_start.timestamp()
+    end_ts = interval_end.timestamp()
+    out: list[float] = []
+    for ts, value in points:
+        if ts < start_ts or ts >= end_ts:
+            continue
+        out.append(value)
+    return out
+
+
+def _prometheus_query_range_by_pod(
     client: httpx.Client,
     base_url: str,
     query: str,
@@ -204,56 +279,76 @@ def _prometheus_query_range(
     end: datetime,
     *,
     step: str = _PROM_STEP,
-) -> list[float]:
-    params = {
-        "query": query,
-        "start": start.timestamp(),
-        "end": end.timestamp(),
-        "step": step,
-    }
-    url = urljoin(base_url.rstrip("/") + "/", "api/v1/query_range") + "?" + urlencode(params)
-    response = client.get(url)
+) -> dict[str, list[tuple[float, float]]]:
+    endpoint = urljoin(base_url.rstrip("/") + "/", "api/v1/query_range")
+    # POST avoids 400/414 from oversized GET URLs when many pods are batched in one regex.
+    response = client.post(
+        endpoint,
+        data={
+            "query": query,
+            "start": str(start.timestamp()),
+            "end": str(end.timestamp()),
+            "step": step,
+        },
+    )
+    if response.status_code >= 400:
+        detail = response.text.strip()[:500]
+        raise RuntimeError(
+            f"prometheus HTTP {response.status_code}"
+            + (f": {detail}" if detail else ""),
+        )
     response.raise_for_status()
     payload = response.json()
     if payload.get("status") != "success":
         raise RuntimeError(payload.get("error") or "prometheus query failed")
     data = payload.get("data") or {}
     result = data.get("result") or []
-    samples: list[float] = []
+    by_pod: dict[str, list[tuple[float, float]]] = {}
     for series in result:
-        for _ts, raw in series.get("values") or []:
-            if raw in ("NaN", "+Inf", "-Inf", None):
-                continue
+        metric = series.get("metric") or {}
+        pod_name = metric.get("pod")
+        if not pod_name:
+            continue
+        points: list[tuple[float, float]] = []
+        for ts_raw, raw in series.get("values") or []:
             try:
-                value = float(raw)
+                ts = float(ts_raw)
             except (TypeError, ValueError):
                 continue
-            if math.isnan(value) or math.isinf(value):
+            value = _parse_sample_value(raw)
+            if value is None:
                 continue
-            samples.append(value)
-    return samples
+            points.append((ts, value))
+        if points:
+            by_pod[str(pod_name)] = points
+    return by_pod
 
 
-def _fetch_sandbox_samples(
+def _fetch_pods_batch_samples(
     client: httpx.Client,
     cfg: dict[str, Any],
     *,
     namespace: str,
-    sandbox_id: str,
-    start: datetime,
-    end: datetime,
-) -> tuple[list[float], list[float]]:
-    pod = primary_pod_name_for_sandbox(sandbox_id)
-    mem_query = substitute_promql(cfg["memoryPromql"], namespace=namespace, pod=pod)
-    cpu_query = substitute_promql(cfg["cpuPromql"], namespace=namespace, pod=pod)
+    pod_names: list[str],
+    query_start: datetime,
+    query_end: datetime,
+) -> tuple[dict[str, list[tuple[float, float]]], dict[str, list[tuple[float, float]]]]:
+    if not pod_names:
+        return {}, {}
+    mem_query = substitute_promql(cfg["memoryPromql"], namespace=namespace, pods=pod_names)
+    cpu_query = substitute_promql(cfg["cpuPromql"], namespace=namespace, pods=pod_names)
     base = cfg["prometheusUrl"]
 
     with ThreadPoolExecutor(max_workers=2) as mini:
-        mem_future = mini.submit(_prometheus_query_range, client, base, mem_query, start, end)
-        cpu_future = mini.submit(_prometheus_query_range, client, base, cpu_query, start, end)
-        mem_samples = mem_future.result()
-        cpu_samples = cpu_future.result()
-    return cpu_samples, mem_samples
+        mem_future = mini.submit(
+            _prometheus_query_range_by_pod, client, base, mem_query, query_start, query_end
+        )
+        cpu_future = mini.submit(
+            _prometheus_query_range_by_pod, client, base, cpu_query, query_start, query_end
+        )
+        mem_by_pod = mem_future.result()
+        cpu_by_pod = cpu_future.result()
+    return cpu_by_pod, mem_by_pod
 
 
 def compute_resource_recommendations(
@@ -310,7 +405,8 @@ def compute_resource_recommendations(
         )
 
     now = datetime.now(timezone.utc)
-    intervals: list[tuple[str, str, str, datetime, datetime]] = []
+    # (sandbox_id, namespace, pod, interval_start, interval_end)
+    sandbox_work: list[tuple[str, str, str, datetime, datetime]] = []
     for row in rows:
         interval = history_store.effective_lifecycle_interval(
             row,
@@ -324,7 +420,17 @@ def compute_resource_recommendations(
         ns = str(row.get("namespace") or "")
         if not sid or not ns:
             continue
-        intervals.append((sid, ns, str(row.get("tenant_name") or ""), interval[0], interval[1]))
+        pod = primary_pod_name_for_sandbox(sid)
+        sandbox_work.append((sid, ns, pod, interval[0], interval[1]))
+
+    by_namespace: dict[str, list[tuple[str, str, str, datetime, datetime]]] = defaultdict(list)
+    for entry in sandbox_work:
+        by_namespace[entry[1]].append(entry)
+
+    batch_jobs: list[tuple[str, list[tuple[str, str, str, datetime, datetime]]]] = []
+    for ns, entries in by_namespace.items():
+        for offset in range(0, len(entries), _PODS_PER_PROM_BATCH):
+            batch_jobs.append((ns, entries[offset : offset + _PODS_PER_PROM_BATCH]))
 
     cpu_pool: list[float] = []
     mem_pool: list[float] = []
@@ -333,43 +439,62 @@ def compute_resource_recommendations(
 
     with httpx.Client(timeout=_PROM_QUERY_TIMEOUT) as client:
 
-        def _task(item: tuple[str, str, str, datetime, datetime]) -> tuple[str, list[float], list[float]]:
-            sid, ns, _tenant, start, end = item
-            cpu_samples, mem_samples = _fetch_sandbox_samples(
+        def _process_batch(
+            namespace: str,
+            batch_entries: list[tuple[str, str, str, datetime, datetime]],
+        ) -> list[tuple[str, list[float], list[float]]]:
+            pod_names = list(dict.fromkeys(entry[2] for entry in batch_entries))
+            cpu_by_pod, mem_by_pod = _fetch_pods_batch_samples(
                 client,
                 cfg,
-                namespace=ns,
-                sandbox_id=sid,
-                start=start,
-                end=end,
+                namespace=namespace,
+                pod_names=pod_names,
+                query_start=period_from,
+                query_end=period_to,
             )
-            return sid, cpu_samples, mem_samples
+            out: list[tuple[str, list[float], list[float]]] = []
+            for sid, _ns, pod, start, end in batch_entries:
+                cpu_samples = _values_in_interval(cpu_by_pod.get(pod, []), start, end)
+                mem_samples = _values_in_interval(mem_by_pod.get(pod, []), start, end)
+                out.append((sid, cpu_samples, mem_samples))
+            return out
 
         with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
-            futures = {pool.submit(_task, item): item[0] for item in intervals}
+            futures = {
+                pool.submit(_process_batch, ns, batch): batch
+                for ns, batch in batch_jobs
+            }
             try:
                 for future in as_completed(futures, timeout=_COMPUTE_DEADLINE_SECONDS):
-                    sid = futures[future]
+                    batch = futures[future]
+                    batch_sids = [entry[0] for entry in batch]
                     try:
-                        sandbox_id_out, cpu_samples, mem_samples = future.result()
+                        batch_results = future.result()
                     except RecommendationError:
                         raise
                     except Exception as exc:
-                        logger.warning("Prometheus fetch failed for sandbox %s: %s", sid, exc)
-                        excluded.append({"sandboxId": sid, "reason": "prometheus_error"})
+                        logger.warning(
+                            "Prometheus batch fetch failed for namespace %s (%d sandboxes): %s",
+                            batch[0][1] if batch else "?",
+                            len(batch_sids),
+                            exc,
+                        )
+                        for sid in batch_sids:
+                            excluded.append({"sandboxId": sid, "reason": "prometheus_error"})
                         continue
-                    if not cpu_samples and not mem_samples:
-                        excluded.append({"sandboxId": sandbox_id_out, "reason": "no_metrics_in_window"})
-                        continue
-                    cpu_pool.extend(cpu_samples)
-                    mem_pool.extend(mem_samples)
-                    per_sandbox.append(
-                        {
-                            "sandboxId": sandbox_id_out,
-                            "cpuSampleCount": len(cpu_samples),
-                            "memorySampleCount": len(mem_samples),
-                        },
-                    )
+                    for sandbox_id_out, cpu_samples, mem_samples in batch_results:
+                        if not cpu_samples and not mem_samples:
+                            excluded.append({"sandboxId": sandbox_id_out, "reason": "no_metrics_in_window"})
+                            continue
+                        cpu_pool.extend(cpu_samples)
+                        mem_pool.extend(mem_samples)
+                        per_sandbox.append(
+                            {
+                                "sandboxId": sandbox_id_out,
+                                "cpuSampleCount": len(cpu_samples),
+                                "memorySampleCount": len(mem_samples),
+                            },
+                        )
             except TimeoutError as exc:
                 for pending in futures:
                     if not pending.done():
@@ -407,7 +532,9 @@ def compute_resource_recommendations(
             "from": period_from.isoformat().replace("+00:00", "Z"),
             "to": period_to.isoformat().replace("+00:00", "Z"),
         },
-        "sandboxCount": len(intervals),
+        "sandboxCount": len(sandbox_work),
+        "prometheusBatchCount": len(batch_jobs),
+        "podsPerPrometheusBatch": _PODS_PER_PROM_BATCH,
         "sandboxCountWithMetrics": len(per_sandbox),
         "sampleCount": {"cpu": len(cpu_pool), "memory": len(mem_pool)},
         "excludedSandboxes": excluded,

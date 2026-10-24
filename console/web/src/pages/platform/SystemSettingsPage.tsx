@@ -157,7 +157,9 @@ export function SystemSettingsPage() {
         <>
           <Typography.Paragraph type="secondary">
             按历史沙箱监控数据做跨沙箱 pooled 分位数，生成 requests / limits 建议。PromQL 须包含{' '}
-            <code>{'{{namespace}}'}</code> 与 <code>{'{{pod}}'}</code>（Pod 名为沙箱 ID 加 <code>-0</code>）。
+            <code>{'{{namespace}}'}</code> 与 <code>{'{{pod_regex}}'}</code>（推荐{' '}
+            <code>pod=~&quot;{'{{pod_regex}}'}&quot;</code>，BFF 会批量填入多个 Pod；Pod 名为沙箱 ID 加{' '}
+            <code>-0</code>）。仍支持旧模板 <code>{'{{pod}}'}</code>（仅单 Pod）。
           </Typography.Paragraph>
           <Form.Item name={['resourceRecommendation', 'enabled']} label="启用资源推荐" valuePropName="checked">
             <Switch />

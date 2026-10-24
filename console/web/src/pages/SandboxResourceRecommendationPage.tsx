@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Button, Card, Col, Row, Space, Statistic, Table, Typography } from 'antd';
+import { Alert, Button, Card, Col, Row, Space, Statistic, Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -29,12 +29,38 @@ import { formatDateTime } from '../utils/format';
 
 const PAGE_SIZE = 20;
 
-function RecommendationResultCard({ result }: { result: ResourceRecommendationRunDetail['result'] }) {
+const EXCLUSION_REASON_LABELS: Record<string, string> = {
+  no_metrics_in_window:
+    '在该沙箱有效运行时段内，Prometheus 未返回 CPU/内存样本（Pod 名、namespace、采集或保留期等问题）。',
+  prometheus_error: '拉取该沙箱所在批次监控时 Prometheus 请求失败（网络、超时或查询错误）。',
+};
+
+function exclusionReasonLabel(code: string): string {
+  return EXCLUSION_REASON_LABELS[code] ?? code;
+}
+
+function sandboxDetailPath(sandboxId: string, tenant: string | null | undefined, isAdmin: boolean): string {
+  if (isAdmin && tenant) {
+    return `/sandboxes/${encodeURIComponent(sandboxId)}?tenant=${encodeURIComponent(tenant)}`;
+  }
+  return `/sandboxes/${encodeURIComponent(sandboxId)}`;
+}
+
+function RecommendationResultCard({
+  result,
+  tenant,
+  isAdmin,
+}: {
+  result: ResourceRecommendationRunDetail['result'];
+  tenant?: string | null;
+  isAdmin: boolean;
+}) {
   if (!result?.requests || !result.limits) {
     return (
       <Alert type="warning" message="该记录无有效推荐结果（可能计算时数据不足）。" showIcon />
     );
   }
+  const excludedSandboxes = result.excludedSandboxes ?? [];
   return (
     <>
       <Row gutter={16}>
@@ -58,18 +84,38 @@ function RecommendationResultCard({ result }: { result: ResourceRecommendationRu
           {result.aggregation ? ` · ${result.aggregation}` : null}
         </Typography.Text>
       )}
-      {(result.excludedSandboxes?.length ?? 0) > 0 && (
-        <Table
-          style={{ marginTop: 16 }}
-          size="small"
-          pagination={false}
-          rowKey="sandboxId"
-          dataSource={result.excludedSandboxes}
-          columns={[
-            { title: '沙箱 ID', dataIndex: 'sandboxId', ellipsis: true },
-            { title: '原因', dataIndex: 'reason', ellipsis: true },
-          ]}
-        />
+      {excludedSandboxes.length > 0 && (
+        <>
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
+            以下 {excludedSandboxes.length} 个沙箱未计入合并样本（推荐值仅来自有监控数据的沙箱）：
+          </Typography.Text>
+          <Table
+            style={{ marginTop: 8 }}
+            size="small"
+            pagination={excludedSandboxes.length > 10 ? { pageSize: 10, size: 'small' } : false}
+            rowKey="sandboxId"
+            dataSource={excludedSandboxes}
+            columns={[
+              {
+                title: '沙箱 ID',
+                dataIndex: 'sandboxId',
+                ellipsis: true,
+                render: (id: string) => (
+                  <Link to={sandboxDetailPath(id, tenant, isAdmin)}>{id}</Link>
+                ),
+              },
+              {
+                title: '说明',
+                dataIndex: 'reason',
+                render: (code: string) => (
+                  <Tooltip title={`内部代码：${code}`}>
+                    <span>{exclusionReasonLabel(code)}</span>
+                  </Tooltip>
+                ),
+              },
+            ]}
+          />
+        </>
       )}
     </>
   );
@@ -140,7 +186,7 @@ function RecommendationRunDetail({ runId }: { runId: string }) {
         </Typography.Text>
       </Card>
       <Card size="small" title="推荐结果">
-        <RecommendationResultCard result={run.result} />
+        <RecommendationResultCard result={run.result} tenant={run.tenant} isAdmin={isAdmin} />
       </Card>
       {!isAdmin && (
         <Typography.Paragraph type="secondary">
@@ -209,10 +255,24 @@ export function SandboxResourceRecommendationPage() {
       {
         title: '区间 / 窗口',
         key: 'period',
-        width: 220,
-        ellipsis: true,
-        render: (_, r) =>
-          r.windowLabel ? `最近 ${r.windowLabel}` : `${r.period?.from ?? '—'} — ${r.period?.to ?? '—'}`,
+        width: 200,
+        render: (_, r) => {
+          if (r.windowLabel) {
+            return `最近 ${r.windowLabel}`;
+          }
+          return (
+            <div style={{ whiteSpace: 'normal', lineHeight: 1.45 }}>
+              <div>
+                <Typography.Text type="secondary">起 </Typography.Text>
+                {formatDateTime(r.period?.from)}
+              </div>
+              <div>
+                <Typography.Text type="secondary">止 </Typography.Text>
+                {formatDateTime(r.period?.to)}
+              </div>
+            </div>
+          );
+        },
       },
       {
         title: '筛选',

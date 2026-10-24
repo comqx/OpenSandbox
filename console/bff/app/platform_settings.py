@@ -198,6 +198,17 @@ def _validate_grafana_patch(body: dict[str, Any]) -> dict[str, Any]:
     return patch
 
 
+def _normalize_resource_recommendation_promql(val: str) -> str:
+    """Accept common single-brace typos; BFF substitution always uses {{name}}."""
+    out = val
+    for name in ("namespace", "pod_regex", "pod"):
+        single = "{" + name + "}"
+        double = "{{" + name + "}}"
+        if single in out and double not in out:
+            out = out.replace(single, double)
+    return out
+
+
 def _validate_resource_recommendation_patch(body: dict[str, Any], settings: Settings) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("resourceRecommendation must be an object")
@@ -212,11 +223,14 @@ def _validate_resource_recommendation_patch(body: dict[str, Any], settings: Sett
             patch["prometheusUrl"] = ""
     for key in ("memoryPromql", "cpuPromql"):
         if key in body:
-            val = str(body[key]).strip()
+            val = _normalize_resource_recommendation_promql(str(body[key]).strip())
             if not val:
                 raise ValueError(f"{key} must be non-empty when set")
-            if "{{namespace}}" not in val or "{{pod}}" not in val:
-                raise ValueError(f"{key} must include {{namespace}} and {{pod}} placeholders")
+            has_pod = "{{pod}}" in val or "{{pod_regex}}" in val
+            if "{{namespace}}" not in val or not has_pod:
+                raise ValueError(
+                    f'{key} must contain "{{namespace}}" and "{{pod}}" or "{{pod_regex}}" (two braces each)',
+                )
             patch[key] = val
     if "percentile" in body:
         p = float(body["percentile"])
