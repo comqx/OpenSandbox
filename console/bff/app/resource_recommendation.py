@@ -28,21 +28,28 @@ import httpx
 from app.config import Settings
 from app.history import store as history_store
 from app.k8s_resources import primary_pod_name_for_sandbox
-from app.platform_settings import get_resource_recommendation_settings
+from app.platform_settings import get_resource_recommendation_runtime
 from app.prometheus_ssrf import validate_prometheus_base_url
 
 logger = logging.getLogger(__name__)
 
 _MAX_SANDBOXES = 2000
 _PODS_PER_PROM_BATCH = 30
-_MIN_SAMPLES = 30
+_MIN_SAMPLES_PER_SANDBOX = 3
+_MIN_QUALIFIED_SANDBOXES = 5
+_LOW_CONFIDENCE_BELOW = 20
+_CPU_REQUEST_WITHIN_PERCENTILE = 75.0
+_MEMORY_REQUEST_WITHIN_PERCENTILE = 95.0
+_CPU_COHORT_REQUEST_PERCENTILE = 75.0
+_HETEROGENEOUS_PEAK_RATIO = 3.0
 _PROM_STEP = "60s"
+_PROM_CHUNK = timedelta(days=7)
 _PROM_QUERY_TIMEOUT = 60.0
 _COMPUTE_DEADLINE_SECONDS = 180.0
 _FETCH_WORKERS = 4
 
-_CPU_QUANT_MILLICORES = 50
-_MEM_QUANT_MIB = 64
+_CPU_QUANT_MILLICORES = 10
+_MEM_QUANT_MIB = 32
 
 _K8S_DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", re.IGNORECASE)
 
@@ -160,32 +167,28 @@ def parse_cpu_cores(value: str) -> float:
 
 
 def parse_memory_bytes(value: str) -> float:
+    """Parse a Kubernetes memory quantity. Suffix case is significant.
+
+    ``m`` is milli-bytes. ``M`` is decimal megabytes. ``Mi`` is mebibytes.
+    """
     text = value.strip()
     if not text:
         raise ValueError("empty memory quantity")
-    match = re.fullmatch(r"(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|K|M|G|T)?i?", text, re.IGNORECASE)
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([A-Za-z]+)?", text)
     if not match:
         raise ValueError(f"invalid memory quantity: {value}")
     amount = float(match.group(1))
-    unit = (match.group(2) or "i").lower()
-    if unit in ("", "i"):
+    unit = match.group(2) or ""
+    if unit == "":
         return amount
-    if unit == "ki":
-        return amount * 1024
-    if unit == "mi":
-        return amount * 1024**2
-    if unit == "gi":
-        return amount * 1024**3
-    if unit == "ti":
-        return amount * 1024**4
-    if unit == "k":
-        return amount * 1000
     if unit == "m":
-        return amount * 1000**2
-    if unit == "g":
-        return amount * 1000**3
-    if unit == "t":
-        return amount * 1000**4
+        return amount / 1000.0
+    binary = {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4}
+    decimal = {"k": 1000, "K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4}
+    if unit in binary:
+        return amount * binary[unit]
+    if unit in decimal:
+        return amount * decimal[unit]
     raise ValueError(f"unsupported memory unit: {unit}")
 
 
@@ -207,22 +210,26 @@ def format_memory_bytes(num_bytes: float) -> str:
 
 def build_requests_limits(
     *,
-    cpu_base_cores: float,
-    memory_base_bytes: float,
+    cpu_request_cores: float,
+    memory_request_bytes: float,
+    cpu_limit_base_cores: float,
+    memory_limit_base_bytes: float,
     percentile: float,
     cpu_limit_ratio: float,
     cpu_limit_floor: str,
     memory_limit_ratio: float,
     memory_limit_floor: str,
 ) -> dict[str, Any]:
-    cpu_request = format_cpu_cores(cpu_base_cores)
-    mem_request = format_memory_bytes(memory_base_bytes)
+    """Quantize request baselines. Limit floors are emitted unchanged when they win."""
+    cpu_request = format_cpu_cores(cpu_request_cores)
+    mem_request = format_memory_bytes(memory_request_bytes)
 
-    cpu_limit_val = max(cpu_base_cores * cpu_limit_ratio, parse_cpu_cores(cpu_limit_floor))
-    mem_limit_val = max(memory_base_bytes * memory_limit_ratio, parse_memory_bytes(memory_limit_floor))
-
-    cpu_limit = format_cpu_cores(cpu_limit_val)
-    mem_limit = format_memory_bytes(mem_limit_val)
+    cpu_floor = parse_cpu_cores(cpu_limit_floor)
+    mem_floor = parse_memory_bytes(memory_limit_floor)
+    cpu_limit_val = cpu_limit_base_cores * cpu_limit_ratio
+    mem_limit_val = memory_limit_base_bytes * memory_limit_ratio
+    cpu_limit = cpu_limit_floor.strip() if cpu_limit_val <= cpu_floor else format_cpu_cores(cpu_limit_val)
+    mem_limit = memory_limit_floor.strip() if mem_limit_val <= mem_floor else format_memory_bytes(mem_limit_val)
 
     if parse_cpu_cores(cpu_limit) < parse_cpu_cores(cpu_request):
         cpu_limit = cpu_request
@@ -231,8 +238,8 @@ def build_requests_limits(
 
     return {
         "percentile": percentile,
-        "cpuBaseCores": cpu_base_cores,
-        "memoryBaseBytes": memory_base_bytes,
+        "cpuBaseCores": cpu_request_cores,
+        "memoryBaseBytes": memory_request_bytes,
         "requests": {"cpu": cpu_request, "memory": mem_request},
         "limits": {"cpu": cpu_limit, "memory": mem_limit},
         "ratios": {
@@ -241,6 +248,135 @@ def build_requests_limits(
             "cpuLimitFloor": cpu_limit_floor,
             "memoryLimitFloor": memory_limit_floor,
         },
+    }
+
+
+def recommendation_pod_names(sandbox_id: str) -> list[str]:
+    """Pod names to try: current BatchSandbox ``<id>-0``, then pre-upgrade ``sandbox-<id>-0``."""
+    primary = primary_pod_name_for_sandbox(sandbox_id)
+    legacy = f"sandbox-{sandbox_id}-0"
+    names: list[str] = []
+    for name in (primary, legacy):
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def iter_prom_range_chunks(
+    start: datetime,
+    end: datetime,
+    *,
+    chunk: timedelta = _PROM_CHUNK,
+):
+    """Split a query_range so each piece stays under Prometheus's 11000-point cap at 60s."""
+    if end <= start:
+        return
+    cursor = start
+    while cursor < end:
+        nxt = min(cursor + chunk, end)
+        yield cursor, nxt
+        cursor = nxt
+
+
+def sandbox_usage_summary(
+    cpu_samples: list[float],
+    memory_samples: list[float],
+    cpu_peak_samples: list[float],
+) -> dict[str, Any]:
+    """One sandbox, one vote: sustained percentiles plus short-window peaks."""
+    peak_fallback = not cpu_peak_samples
+    return {
+        "cpuRequestCores": percentile(cpu_samples, _CPU_REQUEST_WITHIN_PERCENTILE),
+        "memoryRequestBytes": percentile(memory_samples, _MEMORY_REQUEST_WITHIN_PERCENTILE),
+        "cpuPeakCores": max(cpu_samples) if peak_fallback else max(cpu_peak_samples),
+        "memoryPeakBytes": max(memory_samples),
+        "cpuPeakFallback": peak_fallback,
+    }
+
+
+def _distribution(values: list[float]) -> dict[str, float]:
+    return {
+        "p50": percentile(values, 50),
+        "p95": percentile(values, 95),
+        "max": max(values),
+    }
+
+
+def aggregate_sandbox_recommendations(
+    sandboxes: list[dict[str, Any]],
+    *,
+    cohort_percentile: float,
+    cpu_limit_ratio: float,
+    cpu_limit_floor: str,
+    memory_limit_ratio: float,
+    memory_limit_floor: str,
+    single_sandbox_filter: bool,
+    schema_version: int,
+    extra_warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    """Equal-weight cohort recommendation from per-sandbox summaries."""
+    minimum = 1 if single_sandbox_filter else _MIN_QUALIFIED_SANDBOXES
+    if len(sandboxes) < minimum:
+        raise RecommendationError(
+            "INSUFFICIENT_DATA",
+            f"Need at least {minimum} sandboxes with both CPU and memory samples; got {len(sandboxes)}",
+        )
+
+    cpu_requests = [float(row["cpuRequestCores"]) for row in sandboxes]
+    mem_requests = [float(row["memoryRequestBytes"]) for row in sandboxes]
+    cpu_peaks = [float(row["cpuPeakCores"]) for row in sandboxes]
+    mem_peaks = [float(row["memoryPeakBytes"]) for row in sandboxes]
+    mem_peak_dist = _distribution(mem_peaks)
+
+    warnings = list(extra_warnings or [])
+    if mem_peak_dist["p50"] <= 0:
+        if mem_peak_dist["p95"] > 0:
+            warnings.append("heterogeneous_cohort")
+    elif mem_peak_dist["p95"] / mem_peak_dist["p50"] > _HETEROGENEOUS_PEAK_RATIO:
+        warnings.append("heterogeneous_cohort")
+    if any(row.get("cpuPeakFallback") for row in sandboxes):
+        warnings.append("cpu_peak_fallback")
+
+    resource = build_requests_limits(
+        cpu_request_cores=percentile(cpu_requests, _CPU_COHORT_REQUEST_PERCENTILE),
+        memory_request_bytes=percentile(mem_requests, cohort_percentile),
+        cpu_limit_base_cores=percentile(cpu_peaks, cohort_percentile),
+        memory_limit_base_bytes=percentile(mem_peaks, cohort_percentile),
+        percentile=cohort_percentile,
+        cpu_limit_ratio=cpu_limit_ratio,
+        cpu_limit_floor=cpu_limit_floor,
+        memory_limit_ratio=memory_limit_ratio,
+        memory_limit_floor=memory_limit_floor,
+    )
+    per_sandbox = sorted(
+        (
+            {
+                "sandboxId": row["sandboxId"],
+                "cpuSampleCount": row["cpuSampleCount"],
+                "memorySampleCount": row["memorySampleCount"],
+                "cpuRequestCores": row["cpuRequestCores"],
+                "memoryRequestBytes": row["memoryRequestBytes"],
+                "cpuPeakCores": row["cpuPeakCores"],
+                "memoryPeakBytes": row["memoryPeakBytes"],
+            }
+            for row in sandboxes
+        ),
+        key=lambda item: item["sandboxId"],
+    )
+    return {
+        **resource,
+        "schemaVersion": schema_version,
+        "confidence": "low" if len(sandboxes) < _LOW_CONFIDENCE_BELOW else "ok",
+        "warnings": warnings,
+        "aggregation": "per_sandbox_percentile",
+        "distribution": {
+            "sandboxCountQualified": len(sandboxes),
+            "cpuRequestCores": _distribution(cpu_requests),
+            "memoryRequestBytes": _distribution(mem_requests),
+            "cpuPeakCores": _distribution(cpu_peaks),
+            "memoryPeakBytes": mem_peak_dist,
+        },
+        "perSandbox": per_sandbox,
     }
 
 
@@ -324,6 +460,58 @@ def _prometheus_query_range_by_pod(
     return by_pod
 
 
+def classify_sandbox_metrics(
+    pod_names: list[str],
+    cpu_by_pod: dict[str, list[tuple[float, float]]],
+    mem_by_pod: dict[str, list[tuple[float, float]]],
+    peak_by_pod: dict[str, list[tuple[float, float]]],
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    """Pick the first pod name that has both resources, else say why this sandbox is out."""
+    saw_series = False
+    saw_in_window = False
+    for pod in pod_names:
+        cpu_all = cpu_by_pod.get(pod) or []
+        mem_all = mem_by_pod.get(pod) or []
+        peak_all = peak_by_pod.get(pod) or []
+        if cpu_all or mem_all or peak_all:
+            saw_series = True
+        cpu_samples = _values_in_interval(cpu_all, start, end)
+        mem_samples = _values_in_interval(mem_all, start, end)
+        peak_samples = _values_in_interval(peak_all, start, end)
+        if cpu_samples or mem_samples or peak_samples:
+            saw_in_window = True
+        if len(cpu_samples) >= _MIN_SAMPLES_PER_SANDBOX and len(mem_samples) >= _MIN_SAMPLES_PER_SANDBOX:
+            return {
+                "pod": pod,
+                "cpuSampleCount": len(cpu_samples),
+                "memorySampleCount": len(mem_samples),
+                **sandbox_usage_summary(cpu_samples, mem_samples, peak_samples),
+            }
+    if not saw_series:
+        return {"excluded": "pod_name_unresolved"}
+    if not saw_in_window:
+        return {"excluded": "no_metrics_in_window"}
+    return {"excluded": "partial_metrics"}
+
+
+def _merge_pod_points(
+    into: dict[str, dict[float, float]],
+    extra: dict[str, list[tuple[float, float]]],
+) -> None:
+    for pod, points in extra.items():
+        bucket = into.setdefault(pod, {})
+        for ts, value in points:
+            bucket[ts] = value
+
+
+def _materialize_pod_points(
+    acc: dict[str, dict[float, float]],
+) -> dict[str, list[tuple[float, float]]]:
+    return {pod: sorted(points.items()) for pod, points in acc.items() if points}
+
+
 def _fetch_pods_batch_samples(
     client: httpx.Client,
     cfg: dict[str, Any],
@@ -332,23 +520,61 @@ def _fetch_pods_batch_samples(
     pod_names: list[str],
     query_start: datetime,
     query_end: datetime,
-) -> tuple[dict[str, list[tuple[float, float]]], dict[str, list[tuple[float, float]]]]:
+) -> tuple[
+    dict[str, list[tuple[float, float]]],
+    dict[str, list[tuple[float, float]]],
+    dict[str, list[tuple[float, float]]],
+]:
     if not pod_names:
-        return {}, {}
+        return {}, {}, {}
     mem_query = substitute_promql(cfg["memoryPromql"], namespace=namespace, pods=pod_names)
     cpu_query = substitute_promql(cfg["cpuPromql"], namespace=namespace, pods=pod_names)
+    peak_template = str(cfg.get("cpuPeakPromql") or cfg["cpuPromql"])
+    peak_query = substitute_promql(peak_template, namespace=namespace, pods=pod_names)
     base = cfg["prometheusUrl"]
+    cpu_acc: dict[str, dict[float, float]] = {}
+    peak_acc: dict[str, dict[float, float]] = {}
+    mem_acc: dict[str, dict[float, float]] = {}
 
-    with ThreadPoolExecutor(max_workers=2) as mini:
-        mem_future = mini.submit(
-            _prometheus_query_range_by_pod, client, base, mem_query, query_start, query_end
-        )
-        cpu_future = mini.submit(
-            _prometheus_query_range_by_pod, client, base, cpu_query, query_start, query_end
-        )
-        mem_by_pod = mem_future.result()
-        cpu_by_pod = cpu_future.result()
-    return cpu_by_pod, mem_by_pod
+    for chunk_start, chunk_end in iter_prom_range_chunks(query_start, query_end):
+        with ThreadPoolExecutor(max_workers=3) as mini:
+            mem_future = mini.submit(
+                _prometheus_query_range_by_pod, client, base, mem_query, chunk_start, chunk_end
+            )
+            cpu_future = mini.submit(
+                _prometheus_query_range_by_pod, client, base, cpu_query, chunk_start, chunk_end
+            )
+            peak_future = mini.submit(
+                _prometheus_query_range_by_pod, client, base, peak_query, chunk_start, chunk_end
+            )
+            _merge_pod_points(mem_acc, mem_future.result())
+            _merge_pod_points(cpu_acc, cpu_future.result())
+            _merge_pod_points(peak_acc, peak_future.result())
+    return (
+        _materialize_pod_points(cpu_acc),
+        _materialize_pod_points(peak_acc),
+        _materialize_pod_points(mem_acc),
+    )
+
+
+def _batches_for_namespace(
+    entries: list[tuple[str, str, datetime, datetime]],
+) -> list[list[tuple[str, str, datetime, datetime]]]:
+    """Keep each Prometheus regex at or under ``_PODS_PER_PROM_BATCH`` pod names."""
+    batches: list[list[tuple[str, str, datetime, datetime]]] = []
+    current: list[tuple[str, str, datetime, datetime]] = []
+    used = 0
+    for entry in entries:
+        cost = len(recommendation_pod_names(entry[0]))
+        if current and used + cost > _PODS_PER_PROM_BATCH:
+            batches.append(current)
+            current = []
+            used = 0
+        current.append(entry)
+        used += cost
+    if current:
+        batches.append(current)
+    return batches
 
 
 def compute_resource_recommendations(
@@ -366,7 +592,7 @@ def compute_resource_recommendations(
             "History database is not available",
         )
 
-    cfg = get_resource_recommendation_settings(settings)
+    cfg, headroom_warnings = get_resource_recommendation_runtime(settings)
     if not cfg.get("enabled"):
         raise RecommendationError(
             "RECOMMENDATION_DISABLED",
@@ -405,8 +631,8 @@ def compute_resource_recommendations(
         )
 
     now = datetime.now(timezone.utc)
-    # (sandbox_id, namespace, pod, interval_start, interval_end)
-    sandbox_work: list[tuple[str, str, str, datetime, datetime]] = []
+    # (sandbox_id, namespace, interval_start, interval_end)
+    sandbox_work: list[tuple[str, str, datetime, datetime]] = []
     for row in rows:
         interval = history_store.effective_lifecycle_interval(
             row,
@@ -420,31 +646,30 @@ def compute_resource_recommendations(
         ns = str(row.get("namespace") or "")
         if not sid or not ns:
             continue
-        pod = primary_pod_name_for_sandbox(sid)
-        sandbox_work.append((sid, ns, pod, interval[0], interval[1]))
+        sandbox_work.append((sid, ns, interval[0], interval[1]))
 
-    by_namespace: dict[str, list[tuple[str, str, str, datetime, datetime]]] = defaultdict(list)
+    by_namespace: dict[str, list[tuple[str, str, datetime, datetime]]] = defaultdict(list)
     for entry in sandbox_work:
         by_namespace[entry[1]].append(entry)
 
-    batch_jobs: list[tuple[str, list[tuple[str, str, str, datetime, datetime]]]] = []
+    batch_jobs: list[tuple[str, list[tuple[str, str, datetime, datetime]]]] = []
     for ns, entries in by_namespace.items():
-        for offset in range(0, len(entries), _PODS_PER_PROM_BATCH):
-            batch_jobs.append((ns, entries[offset : offset + _PODS_PER_PROM_BATCH]))
+        for batch in _batches_for_namespace(entries):
+            batch_jobs.append((ns, batch))
 
-    cpu_pool: list[float] = []
-    mem_pool: list[float] = []
-    per_sandbox: list[dict[str, Any]] = []
+    qualified: list[dict[str, Any]] = []
     excluded: list[dict[str, str]] = []
 
     with httpx.Client(timeout=_PROM_QUERY_TIMEOUT) as client:
 
         def _process_batch(
             namespace: str,
-            batch_entries: list[tuple[str, str, str, datetime, datetime]],
-        ) -> list[tuple[str, list[float], list[float]]]:
-            pod_names = list(dict.fromkeys(entry[2] for entry in batch_entries))
-            cpu_by_pod, mem_by_pod = _fetch_pods_batch_samples(
+            batch_entries: list[tuple[str, str, datetime, datetime]],
+        ) -> list[tuple[str, dict[str, Any]]]:
+            pod_names = list(
+                dict.fromkeys(name for entry in batch_entries for name in recommendation_pod_names(entry[0]))
+            )
+            cpu_by_pod, peak_by_pod, mem_by_pod = _fetch_pods_batch_samples(
                 client,
                 cfg,
                 namespace=namespace,
@@ -452,11 +677,17 @@ def compute_resource_recommendations(
                 query_start=period_from,
                 query_end=period_to,
             )
-            out: list[tuple[str, list[float], list[float]]] = []
-            for sid, _ns, pod, start, end in batch_entries:
-                cpu_samples = _values_in_interval(cpu_by_pod.get(pod, []), start, end)
-                mem_samples = _values_in_interval(mem_by_pod.get(pod, []), start, end)
-                out.append((sid, cpu_samples, mem_samples))
+            out: list[tuple[str, dict[str, Any]]] = []
+            for sid, _ns, start, end in batch_entries:
+                classified = classify_sandbox_metrics(
+                    recommendation_pod_names(sid),
+                    cpu_by_pod,
+                    mem_by_pod,
+                    peak_by_pod,
+                    start,
+                    end,
+                )
+                out.append((sid, classified))
             return out
 
         with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
@@ -482,19 +713,11 @@ def compute_resource_recommendations(
                         for sid in batch_sids:
                             excluded.append({"sandboxId": sid, "reason": "prometheus_error"})
                         continue
-                    for sandbox_id_out, cpu_samples, mem_samples in batch_results:
-                        if not cpu_samples and not mem_samples:
-                            excluded.append({"sandboxId": sandbox_id_out, "reason": "no_metrics_in_window"})
+                    for sandbox_id_out, classified in batch_results:
+                        if "excluded" in classified:
+                            excluded.append({"sandboxId": sandbox_id_out, "reason": str(classified["excluded"])})
                             continue
-                        cpu_pool.extend(cpu_samples)
-                        mem_pool.extend(mem_samples)
-                        per_sandbox.append(
-                            {
-                                "sandboxId": sandbox_id_out,
-                                "cpuSampleCount": len(cpu_samples),
-                                "memorySampleCount": len(mem_samples),
-                            },
-                        )
+                        qualified.append({"sandboxId": sandbox_id_out, **classified})
             except TimeoutError as exc:
                 for pending in futures:
                     if not pending.done():
@@ -504,26 +727,20 @@ def compute_resource_recommendations(
                     f"Resource recommendation timed out after {_COMPUTE_DEADLINE_SECONDS:.0f}s",
                 ) from exc
 
-    if len(cpu_pool) < _MIN_SAMPLES or len(mem_pool) < _MIN_SAMPLES:
-        raise RecommendationError(
-            "INSUFFICIENT_DATA",
-            f"Need at least {_MIN_SAMPLES} CPU and memory samples; got {len(cpu_pool)} cpu and {len(mem_pool)} memory",
-        )
-
-    p = float(cfg.get("percentile") or 95)
-    cpu_base = percentile(cpu_pool, p)
-    mem_base = percentile(mem_pool, p)
-
     try:
-        resource = build_requests_limits(
-            cpu_base_cores=cpu_base,
-            memory_base_bytes=mem_base,
-            percentile=p,
-            cpu_limit_ratio=float(cfg.get("cpuLimitRatio") or 2),
+        resource = aggregate_sandbox_recommendations(
+            qualified,
+            cohort_percentile=float(cfg.get("percentile") or 95),
+            cpu_limit_ratio=float(cfg.get("cpuLimitRatio") or 1.2),
             cpu_limit_floor=str(cfg.get("cpuLimitFloor") or "100m"),
-            memory_limit_ratio=float(cfg.get("memoryLimitRatio") or 1.5),
+            memory_limit_ratio=float(cfg.get("memoryLimitRatio") or 1.15),
             memory_limit_floor=str(cfg.get("memoryLimitFloor") or "200Mi"),
+            single_sandbox_filter=bool(sandbox_id and str(sandbox_id).strip()),
+            schema_version=2,
+            extra_warnings=headroom_warnings,
         )
+    except RecommendationError:
+        raise
     except ValueError as exc:
         raise RecommendationError("INVALID_SETTINGS", str(exc)) from exc
 
@@ -535,10 +752,11 @@ def compute_resource_recommendations(
         "sandboxCount": len(sandbox_work),
         "prometheusBatchCount": len(batch_jobs),
         "podsPerPrometheusBatch": _PODS_PER_PROM_BATCH,
-        "sandboxCountWithMetrics": len(per_sandbox),
-        "sampleCount": {"cpu": len(cpu_pool), "memory": len(mem_pool)},
+        "sandboxCountWithMetrics": len(qualified),
+        "sampleCount": {
+            "cpu": sum(int(row["cpuSampleCount"]) for row in qualified),
+            "memory": sum(int(row["memorySampleCount"]) for row in qualified),
+        },
         "excludedSandboxes": excluded,
-        "perSandbox": sorted(per_sandbox, key=lambda x: x["sandboxId"]),
-        "aggregation": "pooled_percentile",
         **resource,
     }

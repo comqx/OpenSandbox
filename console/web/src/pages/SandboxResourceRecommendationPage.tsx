@@ -30,10 +30,30 @@ import { formatDateTime } from '../utils/format';
 const PAGE_SIZE = 20;
 
 const EXCLUSION_REASON_LABELS: Record<string, string> = {
-  no_metrics_in_window:
-    '在该沙箱有效运行时段内，Prometheus 未返回 CPU/内存样本（Pod 名、namespace、采集或保留期等问题）。',
+  no_metrics_in_window: 'Pod 有监控序列，但在该沙箱有效运行时段内没有 CPU/内存样本。',
+  pod_name_unresolved: '未找到 <沙箱ID>-0 或 sandbox-<沙箱ID>-0 的监控序列。Pool、agent-sandbox、Docker 不在这次推荐范围内。',
+  partial_metrics: 'CPU 与内存没有同时达到至少 3 个样本，未计入推荐。',
   prometheus_error: '拉取该沙箱所在批次监控时 Prometheus 请求失败（网络、超时或查询错误）。',
 };
+
+const WARNING_LABELS: Record<string, string> = {
+  headroom_defaults_applied: '这套设置还没按新口径保存过，峰值余量使用默认的 CPU 1.2 和内存 1.15，没有沿用旧的 limits 倍数。',
+  heterogeneous_cohort: '这批沙箱的内存峰值相差很大（p95 / p50 大于 3）。当前规格按高分位给出，按 label 或镜像拆开再算更合适。',
+  cpu_peak_fallback: '部分沙箱没有 1 分钟 CPU 峰值序列，这些沙箱的 CPU limit 退回到 2 分钟均值的最大值。',
+};
+
+function formatCores(value?: number): string {
+  if (value == null || Number.isNaN(value)) return '—';
+  if (value >= 1) return `${Number(value.toFixed(2))} 核`;
+  return `${Math.ceil(value * 1000)}m`;
+}
+
+function formatBytes(value?: number): string {
+  if (value == null || Number.isNaN(value)) return '—';
+  const mib = value / 1024 / 1024;
+  if (mib >= 1024) return `${Number((mib / 1024).toFixed(2))}Gi`;
+  return `${Math.ceil(mib)}Mi`;
+}
 
 function exclusionReasonLabel(code: string): string {
   return EXCLUSION_REASON_LABELS[code] ?? code;
@@ -61,8 +81,43 @@ function RecommendationResultCard({
     );
   }
   const excludedSandboxes = result.excludedSandboxes ?? [];
+  const warnings = result.warnings ?? [];
+  const distribution = result.distribution;
+  const distributionRows = distribution
+    ? [
+        { key: 'cpuRequest', label: '各沙箱 CPU 持续用量（箱内 p75）', point: distribution.cpuRequestCores, format: formatCores },
+        { key: 'memRequest', label: '各沙箱内存持续用量（箱内 p95）', point: distribution.memoryRequestBytes, format: formatBytes },
+        { key: 'cpuPeak', label: '各沙箱 CPU 峰值', point: distribution.cpuPeakCores, format: formatCores },
+        { key: 'memPeak', label: '各沙箱内存峰值', point: distribution.memoryPeakBytes, format: formatBytes },
+      ]
+    : [];
   return (
     <>
+      {result.aggregation === 'pooled_percentile' && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="这条记录使用旧的时间加权混合分位，长寿命沙箱占的权重更大。"
+        />
+      )}
+      {result.confidence === 'low' && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="合格沙箱少于 20 个，这次推荐的稳定性较低。"
+        />
+      )}
+      {warnings.map((code) => (
+        <Alert
+          key={code}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={WARNING_LABELS[code] ?? code}
+        />
+      ))}
       <Row gutter={16}>
         <Col xs={12} sm={6}>
           <Statistic title="requests CPU" value={result.requests.cpu ?? '—'} />
@@ -79,15 +134,47 @@ function RecommendationResultCard({
       </Row>
       {result.sampleCount && (
         <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
-          推荐样本：CPU {result.sampleCount.cpu ?? 0} · 内存 {result.sampleCount.memory ?? 0} · 沙箱{' '}
-          {result.sandboxCountWithMetrics ?? 0}/{result.sandboxCount ?? 0} · P{result.percentile ?? 95}
-          {result.aggregation ? ` · ${result.aggregation}` : null}
+          样本：CPU {result.sampleCount.cpu ?? 0} · 内存 {result.sampleCount.memory ?? 0} · 合格沙箱{' '}
+          {result.sandboxCountWithMetrics ?? 0}/{result.sandboxCount ?? 0}
+          {result.aggregation === 'per_sandbox_percentile' ? ' · 每个沙箱一票' : null}
+          {result.confidence === 'low' ? ' · 样本偏少' : null}
+          {result.confidence === 'ok' ? ' · 样本充足' : null}
         </Typography.Text>
+      )}
+      {result.aggregation === 'per_sandbox_percentile' && (
+        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+          上面的 CPU request 是各沙箱持续用量的沙箱间 p75。内存 request 和两项 limit 用沙箱间 P
+          {result.percentile ?? 95}。下表是这些沙箱统计量的分布，表里的 p95 不是 CPU request。
+        </Typography.Text>
+      )}
+      {distributionRows.length > 0 && (
+        <Table
+          style={{ marginTop: 16 }}
+          size="small"
+          pagination={false}
+          rowKey="key"
+          dataSource={distributionRows}
+          columns={[
+            { title: '沙箱间分布', dataIndex: 'label' },
+            {
+              title: 'p50',
+              render: (_, row) => row.format(row.point?.p50),
+            },
+            {
+              title: 'p95',
+              render: (_, row) => row.format(row.point?.p95),
+            },
+            {
+              title: 'max',
+              render: (_, row) => row.format(row.point?.max),
+            },
+          ]}
+        />
       )}
       {excludedSandboxes.length > 0 && (
         <>
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
-            以下 {excludedSandboxes.length} 个沙箱未计入合并样本（推荐值仅来自有监控数据的沙箱）：
+            以下 {excludedSandboxes.length} 个沙箱未计入推荐：
           </Typography.Text>
           <Table
             style={{ marginTop: 8 }}

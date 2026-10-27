@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from app.config import Settings
 from app.prometheus_ssrf import validate_prometheus_base_url
-from app.recommendation_defaults import DEFAULT_CPU_PROMQL, DEFAULT_MEMORY_PROMQL
+from app.recommendation_defaults import DEFAULT_CPU_PEAK_PROMQL, DEFAULT_CPU_PROMQL, DEFAULT_MEMORY_PROMQL
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,13 @@ RESOURCE_RECOMMENDATION_KEYS = (
     "prometheusUrl",
     "memoryPromql",
     "cpuPromql",
+    "cpuPeakPromql",
     "percentile",
     "cpuLimitRatio",
     "cpuLimitFloor",
     "memoryLimitRatio",
     "memoryLimitFloor",
+    "schemaVersion",
 )
 
 
@@ -118,22 +120,88 @@ def _resource_recommendation_defaults() -> dict[str, Any]:
         "prometheusUrl": "",
         "memoryPromql": DEFAULT_MEMORY_PROMQL,
         "cpuPromql": DEFAULT_CPU_PROMQL,
+        "cpuPeakPromql": DEFAULT_CPU_PEAK_PROMQL,
         "percentile": 95,
-        "cpuLimitRatio": 2.0,
+        "cpuLimitRatio": 1.2,
         "cpuLimitFloor": "100m",
-        "memoryLimitRatio": 1.5,
+        "memoryLimitRatio": 1.15,
         "memoryLimitFloor": "200Mi",
+        "schemaVersion": 2,
     }
 
 
-def _merged_resource_recommendation() -> dict[str, Any]:
+def merge_resource_recommendation(overrides: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:
+    """Merge saved recommendation settings onto defaults.
+
+    Documents saved before schemaVersion 2 stored limit ratios that multiplied a
+    pooled p95. Those ratios are not peak headroom, so they are replaced by the
+    new defaults until an admin saves again. The returned flag is true when that
+    replacement happened.
+    """
+    from app.recommendation_defaults import canonicalize_recommendation_promql
+
     merged = _resource_recommendation_defaults()
-    nested = _OVERRIDES.get("resourceRecommendation")
-    if isinstance(nested, dict):
-        for key in RESOURCE_RECOMMENDATION_KEYS:
-            if key in nested:
-                merged[key] = nested[key]
+    if not overrides:
+        return merged, False
+
+    for key in RESOURCE_RECOMMENDATION_KEYS:
+        if key == "schemaVersion" or key not in overrides:
+            continue
+        value = overrides[key]
+        if key in ("memoryPromql", "cpuPromql") and isinstance(value, str):
+            value = canonicalize_recommendation_promql(key, value)
+        merged[key] = value
+
+    if overrides.get("schemaVersion") == 2:
+        merged["schemaVersion"] = 2
+        return merged, False
+
+    defaults = _resource_recommendation_defaults()
+    merged["cpuLimitRatio"] = defaults["cpuLimitRatio"]
+    merged["memoryLimitRatio"] = defaults["memoryLimitRatio"]
+    merged["schemaVersion"] = 1
+    return merged, True
+
+
+def apply_recommendation_save(current: dict[str, Any] | None, rec_patch: dict[str, Any]) -> dict[str, Any]:
+    """Persist a recommendation settings update.
+
+    The first save after the per-sandbox algorithm ships as schemaVersion 2 and
+    always stores the new headroom defaults. Ratios in that upgrade request are
+    the old pooled-p95 multipliers, so they are discarded. Later saves keep the
+    headroom the admin submitted.
+    """
+    from app.recommendation_defaults import canonicalize_recommendation_promql
+
+    base = dict(current or {})
+    merged = {**base, **rec_patch, "schemaVersion": 2}
+    defaults = _resource_recommendation_defaults()
+    if base.get("schemaVersion") != 2:
+        merged["cpuLimitRatio"] = defaults["cpuLimitRatio"]
+        merged["memoryLimitRatio"] = defaults["memoryLimitRatio"]
+        if "cpuPeakPromql" not in rec_patch:
+            merged["cpuPeakPromql"] = defaults["cpuPeakPromql"]
+    for key in ("memoryPromql", "cpuPromql"):
+        if isinstance(merged.get(key), str):
+            merged[key] = canonicalize_recommendation_promql(key, merged[key])
+    if not merged.get("cpuPeakPromql"):
+        merged["cpuPeakPromql"] = defaults["cpuPeakPromql"]
     return merged
+
+
+def _merged_resource_recommendation() -> dict[str, Any]:
+    nested = _OVERRIDES.get("resourceRecommendation")
+    merged, _reset = merge_resource_recommendation(nested if isinstance(nested, dict) else None)
+    return merged
+
+
+def get_resource_recommendation_runtime(settings: Settings) -> tuple[dict[str, Any], list[str]]:
+    """Effective recommendation settings plus compute warnings caused by migration."""
+    _ = settings
+    nested = _OVERRIDES.get("resourceRecommendation")
+    merged, headroom_reset = merge_resource_recommendation(nested if isinstance(nested, dict) else None)
+    warnings = ["headroom_defaults_applied"] if headroom_reset else []
+    return merged, warnings
 
 
 def get_resource_recommendation_settings(settings: Settings) -> dict[str, Any]:
@@ -221,7 +289,7 @@ def _validate_resource_recommendation_patch(body: dict[str, Any], settings: Sett
             patch["prometheusUrl"] = _validate_prometheus_url(raw, settings)
         else:
             patch["prometheusUrl"] = ""
-    for key in ("memoryPromql", "cpuPromql"):
+    for key in ("memoryPromql", "cpuPromql", "cpuPeakPromql"):
         if key in body:
             val = _normalize_resource_recommendation_promql(str(body[key]).strip())
             if not val:
@@ -279,7 +347,7 @@ def save_platform_settings(settings: Settings, body: dict[str, Any]) -> dict[str
         current = _OVERRIDES.get("resourceRecommendation")
         if not isinstance(current, dict):
             current = {}
-        _OVERRIDES["resourceRecommendation"] = {**current, **rec_patch}
+        _OVERRIDES["resourceRecommendation"] = apply_recommendation_save(current, rec_patch)
 
     if _PERSIST_MODE == "db":
         from app.history.store import save_platform_settings_to_db

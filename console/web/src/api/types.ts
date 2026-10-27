@@ -363,11 +363,19 @@ export interface ResourceRecommendationSettings {
   prometheusUrl?: string;
   memoryPromql?: string;
   cpuPromql?: string;
+  cpuPeakPromql?: string;
   percentile?: number;
   cpuLimitRatio?: number;
   cpuLimitFloor?: string;
   memoryLimitRatio?: number;
   memoryLimitFloor?: string;
+  schemaVersion?: number;
+}
+
+export interface ResourceRecommendationDistributionPoint {
+  p50?: number;
+  p95?: number;
+  max?: number;
 }
 
 export interface ResourceRecommendationResponse {
@@ -381,6 +389,16 @@ export interface ResourceRecommendationResponse {
   requests?: { cpu?: string; memory?: string };
   limits?: { cpu?: string; memory?: string };
   aggregation?: string;
+  schemaVersion?: number;
+  confidence?: 'ok' | 'low' | string;
+  warnings?: string[];
+  distribution?: {
+    sandboxCountQualified?: number;
+    cpuRequestCores?: ResourceRecommendationDistributionPoint;
+    memoryRequestBytes?: ResourceRecommendationDistributionPoint;
+    cpuPeakCores?: ResourceRecommendationDistributionPoint;
+    memoryPeakBytes?: ResourceRecommendationDistributionPoint;
+  };
   excludedSandboxes?: { sandboxId: string; reason: string }[];
 }
 

@@ -791,7 +791,12 @@ def _lifecycle_end_at(
     period_to: datetime,
     now: datetime,
 ) -> datetime:
-    """End of sandbox lifetime (never extends past destroy/terminate into 'now' unless still active)."""
+    """End of sandbox lifetime.
+
+    Closed rows stop at delete/end time. A row still marked running stops at
+    now, clipped to the window. Recommendation sampling applies expires_at
+    separately so history duration keeps counting an unclosed row through now.
+    """
     for key in ("ended_at", "deleted_at"):
         ts = row.get(key)
         if isinstance(ts, datetime):
@@ -843,6 +848,11 @@ def effective_lifecycle_interval(
     if start is None:
         return None
     end = _lifecycle_end_at(row, period_to=period_to, now=now)
+    state = row.get("state")
+    closed = state in _TERMINAL or row.get("deleted_at") is not None or isinstance(row.get("ended_at"), datetime)
+    expires = row.get("expires_at")
+    if not closed and isinstance(expires, datetime):
+        end = min(end, expires.astimezone(timezone.utc))
     overlap_start = max(start, period_from.astimezone(timezone.utc))
     overlap_end = min(end, period_to.astimezone(timezone.utc))
     if overlap_end <= overlap_start:
