@@ -98,8 +98,8 @@ def test_build_requests_limits_keeps_floor_string_and_quantizes_above_it():
         memory_limit_ratio=1.15,
         memory_limit_floor="200Mi",
     )
-    assert out["requests"]["cpu"] == "20m"
-    assert out["limits"]["cpu"] == "100m"
+    assert out["requests"]["cpu"] == "50m"
+    assert out["limits"]["cpu"] == "150m"
     assert out["requests"]["memory"] == "128Mi"
     assert out["limits"]["memory"] == "200Mi"
 
@@ -116,6 +116,20 @@ def test_build_requests_limits_keeps_floor_string_and_quantizes_above_it():
     )
     assert raised["requests"]["cpu"] == "200m"
     assert raised["limits"]["cpu"] == "200m"
+
+    higher_floor = build_requests_limits(
+        cpu_request_cores=0.02,
+        memory_request_bytes=64 * 1024**2,
+        cpu_limit_base_cores=0.02,
+        memory_limit_base_bytes=64 * 1024**2,
+        percentile=95,
+        cpu_limit_ratio=1.2,
+        cpu_limit_floor="200m",
+        memory_limit_ratio=1.15,
+        memory_limit_floor="200Mi",
+    )
+    assert higher_floor["requests"]["cpu"] == "50m"
+    assert higher_floor["limits"]["cpu"] == "200m"
 
 
 def test_window_to_period():

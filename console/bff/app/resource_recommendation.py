@@ -50,6 +50,8 @@ _FETCH_WORKERS = 4
 
 _CPU_QUANT_MILLICORES = 10
 _MEM_QUANT_MIB = 32
+_CPU_REQUEST_FLOOR = "50m"
+_CPU_LIMIT_FLOOR = "150m"
 
 _K8S_DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", re.IGNORECASE)
 
@@ -222,6 +224,8 @@ def build_requests_limits(
 ) -> dict[str, Any]:
     """Quantize request baselines. Limit floors are emitted unchanged when they win."""
     cpu_request = format_cpu_cores(cpu_request_cores)
+    if parse_cpu_cores(cpu_request) < parse_cpu_cores(_CPU_REQUEST_FLOOR):
+        cpu_request = _CPU_REQUEST_FLOOR
     mem_request = format_memory_bytes(memory_request_bytes)
 
     cpu_floor = parse_cpu_cores(cpu_limit_floor)
@@ -233,6 +237,8 @@ def build_requests_limits(
 
     if parse_cpu_cores(cpu_limit) < parse_cpu_cores(cpu_request):
         cpu_limit = cpu_request
+    if parse_cpu_cores(cpu_limit) < parse_cpu_cores(_CPU_LIMIT_FLOOR):
+        cpu_limit = _CPU_LIMIT_FLOOR
     if parse_memory_bytes(mem_limit) < parse_memory_bytes(mem_request):
         mem_limit = mem_request
 
@@ -749,7 +755,7 @@ def compute_resource_recommendations(
             cpu_cohort_percentile=_cohort_percentile(cfg, "cpuPercentile"),
             memory_cohort_percentile=_cohort_percentile(cfg, "memoryPercentile"),
             cpu_limit_ratio=float(cfg.get("cpuLimitRatio") or 1.2),
-            cpu_limit_floor=str(cfg.get("cpuLimitFloor") or "100m"),
+            cpu_limit_floor=str(cfg.get("cpuLimitFloor") or _CPU_LIMIT_FLOOR),
             memory_limit_ratio=float(cfg.get("memoryLimitRatio") or 1.15),
             memory_limit_floor=str(cfg.get("memoryLimitFloor") or "200Mi"),
             single_sandbox_filter=bool(sandbox_id and str(sandbox_id).strip()),

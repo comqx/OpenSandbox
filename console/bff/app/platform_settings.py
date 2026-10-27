@@ -127,7 +127,7 @@ def _resource_recommendation_defaults() -> dict[str, Any]:
         "cpuPercentile": 95,
         "memoryPercentile": 95,
         "cpuLimitRatio": 1.2,
-        "cpuLimitFloor": "100m",
+        "cpuLimitFloor": "150m",
         "memoryLimitRatio": 1.15,
         "memoryLimitFloor": "200Mi",
         "schemaVersion": 2,

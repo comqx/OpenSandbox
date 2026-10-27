@@ -218,8 +218,12 @@ export function SystemSettingsPage() {
             >
               <InputNumber min={0.1} step={0.1} style={{ width: 120 }} />
             </Form.Item>
-            <Form.Item name={['resourceRecommendation', 'cpuLimitFloor']} label="CPU limits 下限">
-              <Input placeholder="100m" style={{ width: 120 }} />
+            <Form.Item
+              name={['resourceRecommendation', 'cpuLimitFloor']}
+              label="CPU limits 下限"
+              extra="推荐结果不会低于 150m。CPU request 另有 50m 下限"
+            >
+              <Input placeholder="150m" style={{ width: 120 }} />
             </Form.Item>
             <Form.Item
               name={['resourceRecommendation', 'memoryLimitRatio']}
