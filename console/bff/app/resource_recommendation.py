@@ -306,6 +306,8 @@ def aggregate_sandbox_recommendations(
     sandboxes: list[dict[str, Any]],
     *,
     cohort_percentile: float,
+    cpu_cohort_percentile: float | None = None,
+    memory_cohort_percentile: float | None = None,
     cpu_limit_ratio: float,
     cpu_limit_floor: str,
     memory_limit_ratio: float,
@@ -326,6 +328,8 @@ def aggregate_sandbox_recommendations(
     mem_requests = [float(row["memoryRequestBytes"]) for row in sandboxes]
     cpu_peaks = [float(row["cpuPeakCores"]) for row in sandboxes]
     mem_peaks = [float(row["memoryPeakBytes"]) for row in sandboxes]
+    cpu_percentile = cohort_percentile if cpu_cohort_percentile is None else cpu_cohort_percentile
+    memory_percentile = cohort_percentile if memory_cohort_percentile is None else memory_cohort_percentile
     mem_peak_dist = _distribution(mem_peaks)
 
     warnings = list(extra_warnings or [])
@@ -339,10 +343,10 @@ def aggregate_sandbox_recommendations(
 
     resource = build_requests_limits(
         cpu_request_cores=percentile(cpu_requests, _CPU_COHORT_REQUEST_PERCENTILE),
-        memory_request_bytes=percentile(mem_requests, cohort_percentile),
-        cpu_limit_base_cores=percentile(cpu_peaks, cohort_percentile),
-        memory_limit_base_bytes=percentile(mem_peaks, cohort_percentile),
-        percentile=cohort_percentile,
+        memory_request_bytes=percentile(mem_requests, memory_percentile),
+        cpu_limit_base_cores=percentile(cpu_peaks, cpu_percentile),
+        memory_limit_base_bytes=percentile(mem_peaks, memory_percentile),
+        percentile=memory_percentile,
         cpu_limit_ratio=cpu_limit_ratio,
         cpu_limit_floor=cpu_limit_floor,
         memory_limit_ratio=memory_limit_ratio,
@@ -368,6 +372,8 @@ def aggregate_sandbox_recommendations(
         "schemaVersion": schema_version,
         "confidence": "low" if len(sandboxes) < _LOW_CONFIDENCE_BELOW else "ok",
         "warnings": warnings,
+        "cpuPercentile": cpu_percentile,
+        "memoryPercentile": memory_percentile,
         "aggregation": "per_sandbox_percentile",
         "distribution": {
             "sandboxCountQualified": len(sandboxes),
@@ -577,6 +583,15 @@ def _batches_for_namespace(
     return batches
 
 
+def _cohort_percentile(cfg: dict[str, Any], key: str) -> float:
+    value = cfg.get(key)
+    if value is None:
+        value = cfg.get("percentile")
+    if value is None:
+        return 95.0
+    return float(value)
+
+
 def compute_resource_recommendations(
     settings: Settings,
     *,
@@ -730,7 +745,9 @@ def compute_resource_recommendations(
     try:
         resource = aggregate_sandbox_recommendations(
             qualified,
-            cohort_percentile=float(cfg.get("percentile") or 95),
+            cohort_percentile=_cohort_percentile(cfg, "memoryPercentile"),
+            cpu_cohort_percentile=_cohort_percentile(cfg, "cpuPercentile"),
+            memory_cohort_percentile=_cohort_percentile(cfg, "memoryPercentile"),
             cpu_limit_ratio=float(cfg.get("cpuLimitRatio") or 1.2),
             cpu_limit_floor=str(cfg.get("cpuLimitFloor") or "100m"),
             memory_limit_ratio=float(cfg.get("memoryLimitRatio") or 1.15),

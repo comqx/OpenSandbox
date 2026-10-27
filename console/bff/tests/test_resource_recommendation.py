@@ -220,6 +220,51 @@ def test_cpu_request_stays_on_p75_when_configured_percentile_is_95():
     assert out["cpuBaseCores"] == pytest.approx(1.525)
 
 
+def test_cpu_and_memory_cohort_percentiles_apply_separately():
+    rows = [
+        _summary(
+            f"s-{i}",
+            cpu_request=0.1 * (i + 1),
+            memory_request=(i + 1) * 100 * 1024**2,
+            cpu_peak=0.1 * (i + 1),
+            memory_peak=(i + 1) * 200 * 1024**2,
+        )
+        for i in range(5)
+    ]
+    out = aggregate_sandbox_recommendations(
+        rows,
+        cohort_percentile=95,
+        cpu_cohort_percentile=100,
+        memory_cohort_percentile=50,
+        cpu_limit_ratio=1.2,
+        cpu_limit_floor="100m",
+        memory_limit_ratio=1.15,
+        memory_limit_floor="200Mi",
+        single_sandbox_filter=False,
+        schema_version=2,
+    )
+    assert out["requests"]["cpu"] == "400m"
+    assert out["limits"]["cpu"] == "600m"
+    assert out["requests"]["memory"] == "320Mi"
+    assert out["limits"]["memory"] == "704Mi"
+    assert out["cpuPercentile"] == 100
+    assert out["memoryPercentile"] == 50
+
+
+def test_legacy_percentile_fills_cpu_and_memory_percentiles():
+    merged, reset = merge_resource_recommendation({"schemaVersion": 2, "percentile": 90})
+    assert merged["cpuPercentile"] == 90
+    assert merged["memoryPercentile"] == 90
+    assert reset is False
+
+    split, split_reset = merge_resource_recommendation(
+        {"schemaVersion": 2, "percentile": 90, "cpuPercentile": 80, "memoryPercentile": 99}
+    )
+    assert split["cpuPercentile"] == 80
+    assert split["memoryPercentile"] == 99
+    assert split_reset is False
+
+
 def test_heterogeneous_memory_peaks_warn_without_blocking_result():
     small = [
         _summary(f"s-{i:02d}", cpu_request=0.2, memory_request=100 * 1024**2, cpu_peak=0.4, memory_peak=100 * 1024**2)

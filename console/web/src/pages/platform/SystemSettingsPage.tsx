@@ -163,9 +163,9 @@ export function SystemSettingsPage() {
             PromQL 须包含 <code>{'{{namespace}}'}</code>，以及 <code>{'{{pod_regex}}'}</code> 或{' '}
             <code>{'{{pod}}'}</code>（推荐 <code>pod=~&quot;{'{{pod_regex}}'}&quot;</code>，并限定{' '}
             <code>container=&quot;sandbox&quot;</code>
-            ）。默认还会尝试升级前的 Pod 名 <code>sandbox-&lt;id&gt;-0</code>。分位数用于内存 request
-            以及 CPU / 内存 limit 的沙箱间汇总；CPU request 固定取各沙箱 p75 的 p75。峰值余量乘在峰值分位上，默认
-            CPU 1.2、内存 1.15。第一次保存会写成这组新余量，请求里带上的旧倍数不会写入。
+            ）。默认还会尝试升级前的 Pod 名 <code>sandbox-&lt;id&gt;-0</code>。CPU 沙箱间分位数用于 CPU
+            limit，内存沙箱间分位数用于内存 request 和内存 limit。CPU request 固定取各沙箱 p75 的
+            p75。峰值余量乘在对应峰值分位上，默认 CPU 1.2、内存 1.15。第一次保存会写成这组新余量，请求里带上的旧倍数不会写入。
           </Typography.Paragraph>
           <Form.Item name={['resourceRecommendation', 'enabled']} label="启用资源推荐" valuePropName="checked">
             <Switch />
@@ -194,13 +194,22 @@ export function SystemSettingsPage() {
           >
             <Input.TextArea rows={4} />
           </Form.Item>
-          <Form.Item
-            name={['resourceRecommendation', 'percentile']}
-            label="沙箱间分位数"
-            extra="用于内存 request，以及 CPU / 内存 limit"
-          >
-            <InputNumber min={1} max={100} style={{ width: 120 }} />
-          </Form.Item>
+          <Space wrap size="large">
+            <Form.Item
+              name={['resourceRecommendation', 'cpuPercentile']}
+              label="CPU 沙箱间分位数"
+              extra="用于 CPU limit"
+            >
+              <InputNumber min={1} max={100} style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item
+              name={['resourceRecommendation', 'memoryPercentile']}
+              label="内存沙箱间分位数"
+              extra="用于内存 request 和内存 limit"
+            >
+              <InputNumber min={1} max={100} style={{ width: 120 }} />
+            </Form.Item>
+          </Space>
           <Space wrap size="large">
             <Form.Item
               name={['resourceRecommendation', 'cpuLimitRatio']}

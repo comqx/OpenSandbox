@@ -53,6 +53,8 @@ RESOURCE_RECOMMENDATION_KEYS = (
     "cpuPromql",
     "cpuPeakPromql",
     "percentile",
+    "cpuPercentile",
+    "memoryPercentile",
     "cpuLimitRatio",
     "cpuLimitFloor",
     "memoryLimitRatio",
@@ -122,6 +124,8 @@ def _resource_recommendation_defaults() -> dict[str, Any]:
         "cpuPromql": DEFAULT_CPU_PROMQL,
         "cpuPeakPromql": DEFAULT_CPU_PEAK_PROMQL,
         "percentile": 95,
+        "cpuPercentile": 95,
+        "memoryPercentile": 95,
         "cpuLimitRatio": 1.2,
         "cpuLimitFloor": "100m",
         "memoryLimitRatio": 1.15,
@@ -152,6 +156,8 @@ def merge_resource_recommendation(overrides: dict[str, Any] | None) -> tuple[dic
             value = canonicalize_recommendation_promql(key, value)
         merged[key] = value
 
+    _fill_split_percentiles(merged, overrides)
+
     if overrides.get("schemaVersion") == 2:
         merged["schemaVersion"] = 2
         return merged, False
@@ -161,6 +167,23 @@ def merge_resource_recommendation(overrides: dict[str, Any] | None) -> tuple[dic
     merged["memoryLimitRatio"] = defaults["memoryLimitRatio"]
     merged["schemaVersion"] = 1
     return merged, True
+
+
+def _fill_split_percentiles(merged: dict[str, Any], overrides: dict[str, Any] | None) -> None:
+    """Old settings stored one percentile. Use it for both resources until each is saved."""
+    legacy = merged.get("percentile", 95)
+    source = overrides or {}
+    if "cpuPercentile" not in source:
+        merged["cpuPercentile"] = legacy
+    if "memoryPercentile" not in source:
+        merged["memoryPercentile"] = legacy
+
+
+def _parse_percentile(name: str, value: Any) -> float:
+    parsed = float(value)
+    if parsed <= 0 or parsed > 100:
+        raise ValueError(f"{name} must be between 0 and 100")
+    return parsed
 
 
 def apply_recommendation_save(current: dict[str, Any] | None, rec_patch: dict[str, Any]) -> dict[str, Any]:
@@ -300,11 +323,15 @@ def _validate_resource_recommendation_patch(body: dict[str, Any], settings: Sett
                     f'{key} must contain "{{namespace}}" and "{{pod}}" or "{{pod_regex}}" (two braces each)',
                 )
             patch[key] = val
+    if "cpuPercentile" in body:
+        patch["cpuPercentile"] = _parse_percentile("cpuPercentile", body["cpuPercentile"])
+    if "memoryPercentile" in body:
+        patch["memoryPercentile"] = _parse_percentile("memoryPercentile", body["memoryPercentile"])
     if "percentile" in body:
-        p = float(body["percentile"])
-        if p <= 0 or p > 100:
-            raise ValueError("percentile must be between 0 and 100")
-        patch["percentile"] = p
+        legacy = _parse_percentile("percentile", body["percentile"])
+        patch["percentile"] = legacy
+        patch.setdefault("cpuPercentile", legacy)
+        patch.setdefault("memoryPercentile", legacy)
     if "cpuLimitRatio" in body:
         ratio = float(body["cpuLimitRatio"])
         if ratio <= 0:

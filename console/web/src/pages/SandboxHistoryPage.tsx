@@ -24,11 +24,7 @@ import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../componen
 import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { UsagePeriodFilterBar } from '../components/UsagePeriodFilterBar';
-import type {
-  ResourceRecommendationResponse,
-  SandboxHistoryItem,
-  SandboxHistoryStats,
-} from '../api/types';
+import type { SandboxHistoryItem, SandboxHistoryStats } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { formatDateTime, formatDuration } from '../utils/format';
 import { currentMonthRangeUtc, monthRangeToUsageQuery, usageQueryToDayRange } from '../utils/usagePeriod';
@@ -57,7 +53,6 @@ export function SandboxHistoryPage() {
   const [page, setPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [recLoading, setRecLoading] = useState(false);
-  const [recResult, setRecResult] = useState<ResourceRecommendationResponse | null>(null);
   const [savedRunId, setSavedRunId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -163,11 +158,9 @@ export function SandboxHistoryPage() {
         ...(idQuery ? { sandboxId: idQuery } : {}),
         ...(tenant ? { tenant } : {}),
       });
-      setRecResult(saved.result);
       setSavedRunId(saved.id);
-      message.success('推荐已计算并保存');
+      message.success('已提交计算，请到资源推荐查看结果');
     } catch (e) {
-      setRecResult(null);
       message.error(e instanceof Error ? e.message : '资源推荐计算失败');
     } finally {
       setRecLoading(false);
@@ -289,51 +282,31 @@ export function SandboxHistoryPage() {
             筛选区间（UTC，与列表及推荐计算同口径：生命周期与区间有重叠即计入）：{' '}
             <code>{periodFrom}</code> — <code>{periodTo}</code>
             {totalItems >= 0 ? ` · 共 ${totalItems} 条` : null}
+            。计算在后台进行，具体推荐数据请到
+            <Link to="/history/resource-recommendations">资源推荐</Link>
+            查看。
           </Typography.Text>
         ) : (
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-            未限定时间：列表展示全部历史；推荐计算默认使用最近 7 天滚动窗口。
+            未限定时间：列表展示全部历史；推荐计算默认使用最近 7 天滚动窗口。计算在后台进行，具体推荐数据请到
+            <Link to="/history/resource-recommendations">资源推荐</Link>
+            查看。
           </Typography.Text>
         )}
         {savedRunId && (
           <Alert
-            type="success"
+            type="info"
             showIcon
             style={{ marginTop: 12 }}
             message={
               <span>
-                已保存至资源推荐记录。{' '}
-                <Link to={`/history/resource-recommendations/${savedRunId}`}>查看详情</Link>
+                已开始计算。请到资源推荐查看具体推荐数据：{' '}
+                <Link to={`/history/resource-recommendations/${savedRunId}`}>查看这条记录</Link>
                 {' · '}
-                <Link to="/history/resource-recommendations">全部记录</Link>
+                <Link to="/history/resource-recommendations">资源推荐</Link>
               </span>
             }
           />
-        )}
-        {recResult?.requests && recResult.limits && (
-          <>
-            <Row gutter={16} style={{ marginTop: 12 }}>
-              <Col xs={12} sm={6}>
-                <Statistic title="requests CPU" value={recResult.requests.cpu ?? '—'} />
-              </Col>
-              <Col xs={12} sm={6}>
-                <Statistic title="limits CPU" value={recResult.limits.cpu ?? '—'} />
-              </Col>
-              <Col xs={12} sm={6}>
-                <Statistic title="requests 内存" value={recResult.requests.memory ?? '—'} />
-              </Col>
-              <Col xs={12} sm={6}>
-                <Statistic title="limits 内存" value={recResult.limits.memory ?? '—'} />
-              </Col>
-            </Row>
-            {recResult.sampleCount && (
-              <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-                推荐样本：CPU {recResult.sampleCount.cpu ?? 0} · 内存 {recResult.sampleCount.memory ?? 0} · 沙箱{' '}
-                {recResult.sandboxCountWithMetrics ?? 0}/{recResult.sandboxCount ?? 0} · P
-                {recResult.percentile ?? 95}
-              </Typography.Text>
-            )}
-          </>
         )}
       </Card>
 

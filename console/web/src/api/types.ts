@@ -365,6 +365,8 @@ export interface ResourceRecommendationSettings {
   cpuPromql?: string;
   cpuPeakPromql?: string;
   percentile?: number;
+  cpuPercentile?: number;
+  memoryPercentile?: number;
   cpuLimitRatio?: number;
   cpuLimitFloor?: string;
   memoryLimitRatio?: number;
@@ -384,6 +386,8 @@ export interface ResourceRecommendationResponse {
   sandboxCountWithMetrics?: number;
   sampleCount?: { cpu?: number; memory?: number };
   percentile?: number;
+  cpuPercentile?: number;
+  memoryPercentile?: number;
   cpuBaseCores?: number;
   memoryBaseBytes?: number;
   requests?: { cpu?: string; memory?: string };
@@ -412,12 +416,18 @@ export interface ResourceRecommendationRunSummary {
   createdByRole?: string;
   createdByActor?: string;
   createdAt?: string;
+  finishedAt?: string;
+  status?: 'pending' | 'running' | 'succeeded' | 'failed' | string;
+  errorCode?: string;
+  errorMessage?: string;
   requests?: { cpu?: string; memory?: string };
   limits?: { cpu?: string; memory?: string };
   sampleCount?: { cpu?: number; memory?: number };
   sandboxCount?: number;
   sandboxCountWithMetrics?: number;
   percentile?: number;
+  cpuPercentile?: number;
+  memoryPercentile?: number;
 }
 
 export interface ResourceRecommendationRunDetail extends ResourceRecommendationRunSummary {

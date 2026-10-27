@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Button, Card, Col, Row, Space, Statistic, Table, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Col, Row, Space, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -57,6 +57,17 @@ function formatBytes(value?: number): string {
 
 function exclusionReasonLabel(code: string): string {
   return EXCLUSION_REASON_LABELS[code] ?? code;
+}
+
+function isActiveRun(status?: string): boolean {
+  return status === 'pending' || status === 'running';
+}
+
+function runStatusTag(status?: string) {
+  if (status === 'pending') return <Tag color="default">排队中</Tag>;
+  if (status === 'running') return <Tag color="processing">计算中</Tag>;
+  if (status === 'failed') return <Tag color="error">失败</Tag>;
+  return <Tag color="success">已完成</Tag>;
 }
 
 function sandboxDetailPath(sandboxId: string, tenant: string | null | undefined, isAdmin: boolean): string {
@@ -143,8 +154,10 @@ function RecommendationResultCard({
       )}
       {result.aggregation === 'per_sandbox_percentile' && (
         <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-          上面的 CPU request 是各沙箱持续用量的沙箱间 p75。内存 request 和两项 limit 用沙箱间 P
-          {result.percentile ?? 95}。下表是这些沙箱统计量的分布，表里的 p95 不是 CPU request。
+          上面的 CPU request 是各沙箱持续用量的沙箱间 p75。CPU limit 用沙箱间 P
+          {result.cpuPercentile ?? result.percentile ?? 95}。内存 request 和内存 limit 用沙箱间 P
+          {result.memoryPercentile ?? result.percentile ?? 95}。下表是这些沙箱统计量的分布，表里的 p95
+          不是推荐值。
         </Typography.Text>
       )}
       {distributionRows.length > 0 && (
@@ -236,23 +249,35 @@ function RecommendationRunDetail({ runId }: { runId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
+    let timer = 0;
+
+    const load = async (silent: boolean) => {
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const data = await historyApi.getResourceRecommendationRun(runId);
-        if (!cancelled) setRun(data);
+        if (cancelled) return;
+        setRun(data);
+        if (isActiveRun(data.status)) {
+          timer = window.setTimeout(() => void load(true), 3000);
+        }
       } catch (e) {
-        if (!cancelled) {
+        if (cancelled) return;
+        if (!silent) {
           setRun(null);
           setError(e instanceof Error ? e.message : '加载失败');
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !silent) setLoading(false);
       }
-    })();
+    };
+
+    void load(false);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [runId]);
 
@@ -268,12 +293,26 @@ function RecommendationRunDetail({ runId }: { runId: string }) {
       <Card size="small" title="计算条件">
         <RunConditions run={run} />
         <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-          创建于 {formatDateTime(run.createdAt)} · {run.createdByRole === 'admin' ? '管理员' : '租户'}{' '}
-          {run.createdByActor ? `(${run.createdByActor})` : ''}
+          创建于 {formatDateTime(run.createdAt)}
+          {run.finishedAt ? ` · 完成于 ${formatDateTime(run.finishedAt)}` : ''} ·{' '}
+          {run.createdByRole === 'admin' ? '管理员' : '租户'} {run.createdByActor ? `(${run.createdByActor})` : ''}
+          {' · '}
+          {runStatusTag(run.status)}
         </Typography.Text>
       </Card>
       <Card size="small" title="推荐结果">
-        <RecommendationResultCard result={run.result} tenant={run.tenant} isAdmin={isAdmin} />
+        {isActiveRun(run.status) ? (
+          <Alert type="info" showIcon message="正在计算推荐配置，完成后会显示在这里。" />
+        ) : run.status === 'failed' ? (
+          <Alert
+            type="error"
+            showIcon
+            message="计算失败"
+            description={run.errorMessage || run.errorCode || '未知错误'}
+          />
+        ) : (
+          <RecommendationResultCard result={run.result} tenant={run.tenant} isAdmin={isAdmin} />
+        )}
       </Card>
       {!isAdmin && (
         <Typography.Paragraph type="secondary">
@@ -295,9 +334,11 @@ export function SandboxResourceRecommendationPage() {
   const [error, setError] = useState<string | null>(null);
   const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
 
-  const loadList = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadList = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const tenant = isAdmin ? tenantFilterToQuery(tenantFilter) : undefined;
       const resp = await historyApi.listResourceRecommendationRuns({
@@ -308,11 +349,13 @@ export function SandboxResourceRecommendationPage() {
       setItems(resp.items ?? []);
       setTotalItems(resp.pagination?.totalItems ?? 0);
     } catch (e) {
-      setItems([]);
-      setTotalItems(0);
-      setError(e instanceof Error ? e.message : '加载记录失败');
+      if (!options?.silent) {
+        setItems([]);
+        setTotalItems(0);
+        setError(e instanceof Error ? e.message : '加载记录失败');
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   }, [isAdmin, page, tenantFilter]);
 
@@ -320,6 +363,12 @@ export function SandboxResourceRecommendationPage() {
     if (runId) return;
     void loadList();
   }, [loadList, runId]);
+
+  useEffect(() => {
+    if (runId || !items.some((item) => isActiveRun(item.status))) return;
+    const timer = window.setTimeout(() => void loadList({ silent: true }), 3000);
+    return () => window.clearTimeout(timer);
+  }, [items, loadList, runId]);
 
   const columns: ColumnsType<ResourceRecommendationRunSummary> = useMemo(
     () => [
@@ -373,10 +422,22 @@ export function SandboxResourceRecommendationPage() {
         },
       },
       {
+        title: '状态',
+        dataIndex: 'status',
+        width: 96,
+        render: (status: string | undefined, r) =>
+          r.status === 'failed' && r.errorMessage ? (
+            <Tooltip title={r.errorMessage}>{runStatusTag(status)}</Tooltip>
+          ) : (
+            runStatusTag(status)
+          ),
+      },
+      {
         title: 'requests CPU / 内存',
         key: 'requests',
         width: 180,
-        render: (_, r) => `${r.requests?.cpu ?? '—'} / ${r.requests?.memory ?? '—'}`,
+        render: (_, r) =>
+          isActiveRun(r.status) ? '计算中' : `${r.requests?.cpu ?? '—'} / ${r.requests?.memory ?? '—'}`,
       },
       {
         title: '操作',
@@ -406,7 +467,7 @@ export function SandboxResourceRecommendationPage() {
     <div>
       <Typography.Title level={4}>资源推荐</Typography.Title>
       <Typography.Paragraph type="secondary">
-        每次在<Link to="/history/sandboxes">申请历史</Link>点击「计算沙箱推荐配置」会在此保存一条记录（含筛选条件与完整结果）。
+        在<Link to="/history/sandboxes">申请历史</Link>点击「计算沙箱推荐配置」后，计算在后台进行，完成后可在本页查看具体推荐数据。
         Prometheus 与 PromQL 在<Link to="/platform/settings">系统设置 → 资源推荐</Link>中配置。
       </Typography.Paragraph>
 

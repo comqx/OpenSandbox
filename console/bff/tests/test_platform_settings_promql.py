@@ -26,6 +26,26 @@ CPU = """sum by (pod) (
 )"""
 
 
+def test_validate_split_percentiles_and_legacy_fanout():
+    patch = _validate_resource_recommendation_patch(
+        {"cpuPercentile": 80, "memoryPercentile": 99, "percentile": 90},
+        MagicMock(),
+    )
+    assert patch["cpuPercentile"] == 80
+    assert patch["memoryPercentile"] == 99
+    assert patch["percentile"] == 90
+
+    legacy = _validate_resource_recommendation_patch({"percentile": 90}, MagicMock())
+    assert legacy["percentile"] == 90
+    assert legacy["cpuPercentile"] == 90
+    assert legacy["memoryPercentile"] == 90
+
+    with pytest.raises(ValueError, match="cpuPercentile"):
+        _validate_resource_recommendation_patch({"cpuPercentile": 0}, MagicMock())
+    with pytest.raises(ValueError, match="memoryPercentile"):
+        _validate_resource_recommendation_patch({"memoryPercentile": 101}, MagicMock())
+
+
 def test_validate_promql_with_pod_regex():
     patch = _validate_resource_recommendation_patch(
         {"memoryPromql": MEMORY, "cpuPromql": CPU},

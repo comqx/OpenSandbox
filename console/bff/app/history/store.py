@@ -175,6 +175,10 @@ def _ensure_schema(pool: ConnectionPool) -> None:
                 period_to TIMESTAMPTZ NOT NULL,
                 window_label TEXT,
                 result JSONB NOT NULL,
+                status TEXT NOT NULL DEFAULT 'succeeded',
+                error_code TEXT,
+                error_message TEXT,
+                finished_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
@@ -183,6 +187,24 @@ def _ensure_schema(pool: ConnectionPool) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_sandbox_resource_recommendation_runs_tenant_created
                 ON sandbox_resource_recommendation_runs (tenant_name, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            ALTER TABLE sandbox_resource_recommendation_runs
+                ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'succeeded'
+            """
+        )
+        conn.execute(
+            "ALTER TABLE sandbox_resource_recommendation_runs ADD COLUMN IF NOT EXISTS error_code TEXT"
+        )
+        conn.execute(
+            "ALTER TABLE sandbox_resource_recommendation_runs ADD COLUMN IF NOT EXISTS error_message TEXT"
+        )
+        conn.execute(
+            """
+            ALTER TABLE sandbox_resource_recommendation_runs
+                ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ
             """
         )
         conn.execute(
@@ -1874,6 +1896,7 @@ def _recommendation_run_to_item(row: dict[str, Any]) -> dict[str, Any]:
     period_from = row.get("period_from")
     period_to = row.get("period_to")
     created_at = row.get("created_at")
+    finished_at = row.get("finished_at")
     return {
         "id": row["id"],
         "tenant": row.get("tenant_name"),
@@ -1893,16 +1916,24 @@ def _recommendation_run_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "createdAt": created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         if isinstance(created_at, datetime)
         else None,
+        "finishedAt": finished_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if isinstance(finished_at, datetime)
+        else None,
+        "status": row.get("status") or "succeeded",
+        "errorCode": row.get("error_code") or "",
+        "errorMessage": row.get("error_message") or "",
         "requests": result.get("requests"),
         "limits": result.get("limits"),
         "sampleCount": result.get("sampleCount"),
         "sandboxCount": result.get("sandboxCount"),
         "sandboxCountWithMetrics": result.get("sandboxCountWithMetrics"),
         "percentile": result.get("percentile"),
+        "cpuPercentile": result.get("cpuPercentile", result.get("percentile")),
+        "memoryPercentile": result.get("memoryPercentile", result.get("percentile")),
     }
 
 
-def insert_recommendation_run(
+def insert_pending_recommendation_run(
     settings: Settings,
     *,
     tenant_name: str | None,
@@ -1913,7 +1944,6 @@ def insert_recommendation_run(
     period_from: datetime,
     period_to: datetime,
     window_label: str | None,
-    result: dict[str, Any],
 ) -> dict[str, Any]:
     del settings
     if _pool is None:
@@ -1926,9 +1956,10 @@ def insert_recommendation_run(
             """
             INSERT INTO sandbox_resource_recommendation_runs (
                 id, tenant_name, created_by_role, created_by_actor,
-                label, sandbox_id_filter, period_from, period_to, window_label, result
+                label, sandbox_id_filter, period_from, period_to, window_label,
+                result, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, 'pending')
             RETURNING *
             """,
             (
@@ -1941,13 +1972,70 @@ def insert_recommendation_run(
                 period_from,
                 period_to,
                 window_label,
-                json.dumps(result),
             ),
         ).fetchone()
     if not row:
         raise RuntimeError("Failed to insert recommendation run")
     item = _recommendation_run_to_item(row)
-    return {**item, "result": result}
+    return {**item, "result": {}}
+
+
+def mark_recommendation_run_running(settings: Settings, *, run_id: str) -> None:
+    del settings
+    if _pool is None:
+        raise RuntimeError("History database is not available")
+    with _pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE sandbox_resource_recommendation_runs
+            SET status = 'running'
+            WHERE id = %s AND status = 'pending'
+            """,
+            (run_id,),
+        )
+
+
+def complete_recommendation_run(settings: Settings, *, run_id: str, result: dict[str, Any]) -> None:
+    del settings
+    if _pool is None:
+        raise RuntimeError("History database is not available")
+    with _pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE sandbox_resource_recommendation_runs
+            SET status = 'succeeded',
+                result = %s::jsonb,
+                error_code = NULL,
+                error_message = NULL,
+                finished_at = NOW()
+            WHERE id = %s
+            """,
+            (json.dumps(result), run_id),
+        )
+
+
+def fail_recommendation_run(
+    settings: Settings,
+    *,
+    run_id: str,
+    error_code: str,
+    error_message: str,
+) -> None:
+    del settings
+    if _pool is None:
+        raise RuntimeError("History database is not available")
+    with _pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE sandbox_resource_recommendation_runs
+            SET status = 'failed',
+                error_code = %s,
+                error_message = %s,
+                finished_at = NOW()
+            WHERE id = %s
+            """,
+            (error_code[:80], error_message[:2000], run_id),
+        )
 
 
 def list_recommendation_runs(

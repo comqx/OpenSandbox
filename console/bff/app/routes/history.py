@@ -18,11 +18,12 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
 from app.config import get_settings
 from app.deps import get_session_payload, require_admin_session, require_tenant_session
 from app.history import reconcile, store
+from app.history.recommendation_jobs import execute_recommendation_run
 from app.resource_recommendation import RecommendationError, compute_resource_recommendations, window_to_period
 
 router = APIRouter(prefix="/history", tags=["history"])
@@ -408,34 +409,27 @@ async def resource_recommendations(
         _raise_recommendation_error(exc)
 
 
-@router.post("/resource-recommendation-runs")
+@router.post("/resource-recommendation-runs", status_code=status.HTTP_202_ACCEPTED)
 async def create_resource_recommendation_run(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: dict = Depends(get_session_payload),
 ) -> dict[str, Any]:
     _history_disabled()
     settings = get_settings()
     tenant_filter = _recommendation_tenant_scope(request, payload)
     period_from, period_to, label, sandbox_id, window_label = _recommendation_period_and_filters(request)
-    await _maybe_reconcile_history(request, settings, payload, tenant_filter)
-
-    try:
-        result = await asyncio.to_thread(
-            compute_resource_recommendations,
-            settings,
-            tenant_name=tenant_filter,
-            period_from=period_from,
-            period_to=period_to,
-            label=label,
-            sandbox_id=sandbox_id,
-        )
-    except RecommendationError as exc:
-        _raise_recommendation_error(exc)
+    reconcile_tenants = None
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        reconcile_tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
 
     role = str(payload.get("role") or "tenant")
     try:
-        return await asyncio.to_thread(
-            store.insert_recommendation_run,
+        created = await asyncio.to_thread(
+            store.insert_pending_recommendation_run,
             settings,
             tenant_name=tenant_filter,
             created_by_role=role,
@@ -445,13 +439,24 @@ async def create_resource_recommendation_run(
             period_from=period_from,
             period_to=period_to,
             window_label=window_label,
-            result=result,
         )
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "HISTORY_UNAVAILABLE", "message": str(exc)},
         ) from exc
+
+    background_tasks.add_task(
+        execute_recommendation_run,
+        run_id=created["id"],
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+        label=label,
+        sandbox_id=sandbox_id,
+        reconcile_tenants=reconcile_tenants,
+    )
+    return created
 
 
 @router.get("/resource-recommendation-runs")
