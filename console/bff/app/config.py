@@ -25,8 +25,13 @@ class Settings(BaseSettings):
     bff_session_secret: str
     bff_admin_token: str
     bff_cookie_secure: bool = False
-    bff_cors_origins: str = "http://localhost:5173"
+    bff_cors_origins: str = "*"
+    bff_aggregate_cache_seconds: int = 0
     bff_http_timeout_seconds: float = 30.0
+    # Empty follows LIFECYCLE_API_BASE. Set http or https when execd endpoints omit a scheme.
+    bff_execd_protocol: str = ""
+    # server: dial LIFECYCLE_API_BASE /sandboxes/{id}/proxy/44772. gateway: dial the public ingress endpoint.
+    bff_shell_endpoint_mode: str = "server"
     bff_session_cookie_name: str = "opensandbox_console_session"
     bff_session_max_age_seconds: int = 86400
 
@@ -51,15 +56,54 @@ class Settings(BaseSettings):
     bff_nodeagent_oss_access_key_secret: str = ""
     bff_nodeagent_archive_max_bytes: int = 524_288
 
+    # Optional: sandbox apply history in PostgreSQL (same DB as Server [store]; table sandbox_lifecycle_history)
+    bff_history_enabled: bool = False
+    bff_history_database_url: str = ""
+    # When true, history API reads scan Lifecycle before returning. Default off; the poller does that scan.
+    bff_history_reconcile_on_read: bool = False
+    # Seconds between history reconcile polls. 0 disables the poller.
+    bff_history_reconcile_interval_seconds: int = 600
+
+    # Grafana embed (Console sandbox monitor + Admin system settings)
+    bff_grafana_enabled: bool = False
+    bff_grafana_base_url: str = ""
+    bff_grafana_dashboard_slug: str = "opensandbox-pod-node"
+    bff_grafana_dashboard_uid: str = ""
+    bff_grafana_refresh: str = "30s"
+    bff_grafana_embed_mode: str = "direct"
+    bff_grafana_var_namespace: str = "var-namespace"
+    bff_grafana_var_pod: str = "var-pod"
+    bff_grafana_var_node: str = "var-node"
+    bff_grafana_var_datasource: str = "var-DS_PROM"
+    bff_grafana_datasource_uid: str = "prometheus"
+    bff_grafana_auth_proxy_enabled: bool = False
+    bff_grafana_auth_proxy_user_header: str = "X-WEBAUTH-USER"
+    # Optional JSON file when history DB is disabled (Admin PATCH persistence)
+    bff_platform_settings_path: str = ""
+    # Optional JSON file for the sandbox image catalog when history DB is disabled
+    bff_image_catalog_path: str = ""
+
+    # Sandbox image build context drafts (PostgreSQL + OSS; requires BFF_HISTORY_ENABLED)
+    bff_image_build_enabled: bool = False
+    bff_image_build_max_files: int = 256
+    bff_image_build_max_file_bytes: int = 5 * 1024 * 1024
+    bff_image_build_max_total_bytes: int = 50 * 1024 * 1024
+    bff_image_build_oss_endpoint: str = ""
+    bff_image_build_oss_bucket: str = ""
+    bff_image_build_oss_key_prefix: str = "console/image-build"
+    bff_image_build_oss_access_key_id: str = ""
+    bff_image_build_oss_access_key_secret: str = ""
+    # In-cluster image builder. Empty disables remote build submission.
+    bff_image_builder_base_url: str = ""
+
+    # Allow Prometheus URLs that resolve to RFC1918 (typical in-cluster Service). Disable for strictly outbound-only BFF.
+    bff_prometheus_allow_internal: bool = True
+
     @property
     def cors_origins_list(self) -> list[str]:
-        origins = [origin.strip() for origin in self.bff_cors_origins.split(",") if origin.strip()]
-        if any(origin == "*" for origin in origins):
-            raise ValueError(
-                "BFF_CORS_ORIGINS must list explicit origins; '*' is rejected "
-                "because session cookies are sent with credentials"
-            )
-        return origins
+        if self.bff_cors_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.bff_cors_origins.split(",") if o.strip()]
 
 
 @lru_cache

@@ -14,41 +14,48 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
 
-import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.lifecycle import LifecycleClient, bind_http_client
-from app.routes import admin, auth, pools, sandboxes, snapshots
+from app.history import reconcile
+from app.lifecycle import LifecycleClient
+from app.history.store import close_history_pool, init_history_pool
+from app.image_catalog import init_image_catalog
+from app.platform_settings import init_platform_settings
+from app.routes import admin, auth, build_contexts, history, images, platform, pools, sandboxes, shell, snapshots
+
+app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0")
+_history_poll_task: asyncio.Task[None] | None = None
 
 
-def _validate_config() -> None:
+@app.on_event("startup")
+async def validate_config() -> None:
+    global _history_poll_task
     settings = get_settings()
     if not settings.tenants_toml_path:
         raise RuntimeError("TENANTS_TOML_PATH is required")
     if not settings.bff_session_secret or not settings.bff_admin_token:
         raise RuntimeError("BFF_SESSION_SECRET and BFF_ADMIN_TOKEN are required")
-    # Reject wildcard CORS before the process serves credentialed cookies.
-    _ = settings.cors_origins_list
+    init_history_pool(settings)
+    init_platform_settings(settings)
+    init_image_catalog(settings)
+    _history_poll_task = asyncio.create_task(reconcile.poll_forever(settings))
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    _validate_config()
-    settings = get_settings()
-    client = httpx.AsyncClient(timeout=settings.bff_http_timeout_seconds)
-    bind_http_client(client)
-    try:
-        yield
-    finally:
-        bind_http_client(None)
-        await client.aclose()
-
-
-app = FastAPI(title="OpenSandbox Console BFF", version="0.1.0", lifespan=lifespan)
+@app.on_event("shutdown")
+async def shutdown_history() -> None:
+    global _history_poll_task
+    if _history_poll_task is not None:
+        _history_poll_task.cancel()
+        try:
+            await _history_poll_task
+        except asyncio.CancelledError:
+            pass
+        _history_poll_task = None
+    close_history_pool()
 
 
 @app.get("/health")
@@ -74,7 +81,13 @@ app.add_middleware(
 api = FastAPI()
 api.include_router(auth.router)
 api.include_router(sandboxes.router)
+api.include_router(shell.router)
 api.include_router(snapshots.router)
 api.include_router(pools.router)
 api.include_router(admin.router)
+api.include_router(history.router)
+api.include_router(images.router)
+api.include_router(build_contexts.router)
+api.include_router(platform.router)
+api.include_router(platform.admin_router)
 app.mount("/api", api)

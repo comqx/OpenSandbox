@@ -5,7 +5,7 @@ description: Optional React console and FastAPI BFF for sandbox lifecycle operat
 
 # Developer Console
 
-OpenSandbox includes an **optional** developer console under [`console/`](https://github.com/opensandbox-group/OpenSandbox/tree/main/console) in the monorepo. It provides a web UI for common lifecycle tasks (list, create, renew, delete, endpoints, diagnostics) without putting API keys in the browser.
+OpenSandbox includes an **optional** developer console under [`console/`](https://github.com/opensandbox-group/OpenSandbox/tree/main/console) in the monorepo. It provides a web UI for common lifecycle tasks (list, create, renew, delete, endpoints, diagnostics, and an interactive shell) without putting API keys in the browser.
 
 This guide is the **published entry point**. Detailed BFF configuration, API notes, and Kubernetes examples live next to the code:
 
@@ -22,7 +22,7 @@ This guide is the **published entry point**. Detailed BFF configuration, API not
 [OSEP-0006](../community/oseps.md) describes a phased console and server-side auth. The in-tree implementation is a **BFF adjunct**:
 
 - Tenant **API keys** and **`BFF_ADMIN_TOKEN`** stay on the server/BFF; the SPA uses **httpOnly cookies**.
-- **Sandbox history / usage analytics** (PostgreSQL) are planned for a later release; the MVP console uses the Lifecycle API only. See [console/docs/07-sandbox-history.md](https://github.com/opensandbox-group/OpenSandbox/blob/main/console/docs/07-sandbox-history.md).
+- Optional **`store.lifecycle_audit`** on the lifecycle server ([`server/configuration.md`](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md)) can write PostgreSQL history rows consumed by the console BFF.
 
 ## High-level layout
 
@@ -30,6 +30,10 @@ This guide is the **published entry point**. Detailed BFF configuration, API not
 Browser → Console Web (static) → Console BFF (/api) → Lifecycle API (/v1)
                                       ↓
                               tenants.toml (same as server)
+                                      ↓
+                              Kubernetes API (image preheat pods only)
+                                      ↓
+                              execd PTY (shell only, after endpoint lookup)
 ```
 
 ## Minimum deployment

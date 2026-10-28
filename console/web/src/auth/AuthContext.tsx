@@ -22,7 +22,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import { authApi, setUnauthorizedHandler } from '../api/client';
 import type { SessionUser } from '../api/types';
@@ -111,8 +111,9 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading || !user) return null;
-  if (user.role !== 'admin') return <Navigate to="/" replace />;
+  const { user } = useAuth();
+  if (user?.role !== 'admin') {
+    return null;
+  }
   return <>{children}</>;
 }

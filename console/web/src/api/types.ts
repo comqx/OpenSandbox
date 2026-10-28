@@ -46,19 +46,12 @@ export interface Sandbox {
   namespace?: string;
 }
 
-export interface TenantListResponse {
-  items: { name: string; namespace: string }[];
-}
-
 export interface PaginatedSandboxes {
   items: Sandbox[];
   pagination?: {
     page?: number;
     pageSize?: number;
     totalItems?: number;
-    hasNextPage?: boolean;
-    /** True when any tenant still has sandboxes beyond this page. */
-    capped?: boolean;
     tenantErrors?: { tenant: string; code: string; message: string }[];
   };
 }
@@ -70,6 +63,135 @@ export interface RuntimeStats {
   maxWallClockSeconds: number;
   expiringWithin30mCount: number;
   asOf: string;
+}
+
+export interface ResourceLimitsMap {
+  cpu?: string;
+  memory?: string;
+  disk?: string;
+  [key: string]: string | undefined;
+}
+
+export interface SandboxHistoryItem {
+  sandboxId: string;
+  tenant?: string;
+  namespace?: string;
+  state?: string;
+  imageUri?: string;
+  createdAt?: string;
+  expiresAt?: string;
+  endedAt?: string;
+  deletedAt?: string;
+  wallClockSeconds?: number;
+  snapshotCount?: number;
+  source?: string;
+  firstRecordedAt?: string;
+  lastSeenAt?: string;
+  /** 创建时写入的 metadata，即沙箱标签 */
+  metadata?: Record<string, string>;
+  /** 创建时的 Kubernetes resourceLimits（来自历史入库） */
+  resourceLimits?: ResourceLimitsMap;
+  resourceRequests?: ResourceLimitsMap;
+  cpuCores?: number;
+  memoryGi?: number;
+  createTimeoutSeconds?: number;
+}
+
+export interface HistoryTenantStatsRow {
+  tenant: string;
+  totalRecords: number;
+  activeRecords: number;
+  totalWallClockSeconds: number;
+  avgWallClockSeconds: number;
+}
+
+export interface CreatedSeriesRow {
+  tenant: string;
+  counts: number[];
+}
+
+export interface CreatedSeriesResponse {
+  enabled?: boolean;
+  bucket?: 'day' | 'month';
+  points?: string[];
+  series?: CreatedSeriesRow[];
+  totals?: number[];
+  asOf?: string;
+  period?: { from?: string; to?: string };
+}
+
+export interface SandboxHistoryStats {
+  enabled?: boolean;
+  totalRecords?: number;
+  activeRecords?: number;
+  totalWallClockSeconds?: number;
+  avgWallClockSeconds?: number;
+  asOf?: string;
+  period?: { from?: string; to?: string };
+  tenants?: HistoryTenantStatsRow[];
+}
+
+export interface ImageStatsRow {
+  imageUri: string;
+  sandboxCount: number;
+  activeCount: number;
+  tenantCount: number;
+  sharePercent: number;
+  lastUsedAt?: string;
+}
+
+export interface ImageStatsResponse {
+  enabled?: boolean;
+  asOf?: string;
+  totalRecords?: number;
+  distinctImages?: number;
+  items: ImageStatsRow[];
+}
+
+export interface SandboxHistoryListResponse {
+  items: SandboxHistoryItem[];
+  period?: { from?: string; to?: string };
+  pagination?: {
+    page?: number;
+    pageSize?: number;
+    totalItems?: number;
+    totalPages?: number;
+    hasNextPage?: boolean;
+  };
+}
+
+export interface TenantUsageSharePercent {
+  time?: number;
+  cpu?: number;
+  memory?: number;
+  /** Equal-weight mean of time/cpu/memory shares; sums to ~100% across tenants. */
+  composite?: number;
+}
+
+export interface TenantUsageRow {
+  tenant: string;
+  sandboxCount: number;
+  overlapSeconds: number;
+  cpuCoreSeconds: number;
+  memoryGiSeconds: number;
+  sharePercent?: TenantUsageSharePercent;
+}
+
+export interface TenantUsageResponse {
+  enabled?: boolean;
+  basis?: string;
+  coverageNote?: string;
+  shareFormula?: Record<string, string>;
+  period?: { from?: string; to?: string };
+  totals?: {
+    sandboxCount?: number;
+    overlapSeconds?: number;
+    cpuCoreSeconds?: number;
+    memoryGiSeconds?: number;
+    /** Rows counted in sandbox/time totals but missing create-time limits for CPU or memory. */
+    limitsMissing?: number;
+  };
+  tenants?: TenantUsageRow[];
 }
 
 export interface Snapshot {
@@ -90,12 +212,6 @@ export interface PoolItem {
   namespace?: string;
   status?: { state?: string; message?: string };
   spec?: Record<string, unknown>;
-}
-
-/** Lifecycle pool create/update body. `name` is required; other fields follow the pool spec. */
-export interface PoolUpsertRequest {
-  name: string;
-  [key: string]: unknown;
 }
 
 export interface K8sWorkloadRow {
@@ -126,7 +242,6 @@ export interface K8sListResponse<T> {
   totalItems?: number;
   disabled?: boolean;
   message?: string;
-  errorCode?: string;
 }
 
 export interface PoolListResponse {
@@ -147,6 +262,7 @@ export interface DiagnosticContentResponse {
     objectKey?: string;
     prefix?: string;
     markerStatus?: string | null;
+    objectSizeBytes?: number;
   };
 }
 
@@ -170,4 +286,260 @@ export interface PlatformSummary {
 export interface ApiErrorBody {
   code?: string;
   message?: string;
+}
+
+export interface SandboxImageCatalogItem {
+  id: string;
+  displayName: string;
+  imageUri: string;
+  scenarios: string[];
+  systemPackages: string[];
+  runtimePackages: string[];
+  maintainer: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SandboxImageCatalogResponse {
+  items: SandboxImageCatalogItem[];
+  persisted?: boolean;
+  source?: string;
+}
+
+export interface PreheatNodeStatus {
+  nodeName: string;
+  podName: string;
+  state: 'pulling' | 'succeeded' | 'failed';
+  message: string;
+}
+
+export interface PreheatNodesResponse {
+  tenant: string;
+  namespace: string;
+  nodes: { name: string }[];
+}
+
+export interface PreheatHistoryItem {
+  id: string;
+  preheatId: string;
+  imageId: string;
+  imageUri: string;
+  tenant: string;
+  namespace: string;
+  nodeName: string;
+  podName: string;
+  state: 'pulling' | 'succeeded' | 'failed';
+  message: string;
+  createdBy?: string;
+  createdAt?: string;
+  finishedAt?: string;
+}
+
+export interface PreheatHistoryResponse {
+  persisted: boolean;
+  items: PreheatHistoryItem[];
+}
+
+export interface PreheatStatusResponse {
+  preheatId: string;
+  tenant: string;
+  namespace: string;
+  imageUri?: string;
+  nodes: PreheatNodeStatus[];
+}
+
+export interface SandboxImageCatalogInput {
+  displayName: string;
+  imageUri: string;
+  scenarios: string[];
+  systemPackages: string[];
+  runtimePackages: string[];
+  maintainer?: string;
+}
+
+export interface ResourceRecommendationSettings {
+  enabled?: boolean;
+  prometheusUrl?: string;
+  memoryPromql?: string;
+  cpuPromql?: string;
+  cpuPeakPromql?: string;
+  percentile?: number;
+  cpuPercentile?: number;
+  memoryPercentile?: number;
+  cpuLimitRatio?: number;
+  cpuLimitFloor?: string;
+  memoryLimitRatio?: number;
+  memoryLimitFloor?: string;
+  schemaVersion?: number;
+}
+
+export interface ResourceRecommendationDistributionPoint {
+  p50?: number;
+  p95?: number;
+  max?: number;
+}
+
+export interface ResourceRecommendationResponse {
+  period?: { from?: string; to?: string };
+  sandboxCount?: number;
+  sandboxCountWithMetrics?: number;
+  sampleCount?: { cpu?: number; memory?: number };
+  percentile?: number;
+  cpuPercentile?: number;
+  memoryPercentile?: number;
+  cpuBaseCores?: number;
+  memoryBaseBytes?: number;
+  requests?: { cpu?: string; memory?: string };
+  limits?: { cpu?: string; memory?: string };
+  aggregation?: string;
+  schemaVersion?: number;
+  confidence?: 'ok' | 'low' | string;
+  warnings?: string[];
+  distribution?: {
+    sandboxCountQualified?: number;
+    cpuRequestCores?: ResourceRecommendationDistributionPoint;
+    memoryRequestBytes?: ResourceRecommendationDistributionPoint;
+    cpuPeakCores?: ResourceRecommendationDistributionPoint;
+    memoryPeakBytes?: ResourceRecommendationDistributionPoint;
+  };
+  excludedSandboxes?: { sandboxId: string; reason: string }[];
+}
+
+export interface ResourceRecommendationRunSummary {
+  id: string;
+  tenant?: string | null;
+  label?: string;
+  sandboxIdFilter?: string;
+  windowLabel?: string;
+  period?: { from?: string; to?: string };
+  createdByRole?: string;
+  createdByActor?: string;
+  createdAt?: string;
+  finishedAt?: string;
+  status?: 'pending' | 'running' | 'succeeded' | 'failed' | string;
+  errorCode?: string;
+  errorMessage?: string;
+  requests?: { cpu?: string; memory?: string };
+  limits?: { cpu?: string; memory?: string };
+  sampleCount?: { cpu?: number; memory?: number };
+  sandboxCount?: number;
+  sandboxCountWithMetrics?: number;
+  percentile?: number;
+  cpuPercentile?: number;
+  memoryPercentile?: number;
+}
+
+export interface ResourceRecommendationRunDetail extends ResourceRecommendationRunSummary {
+  result: ResourceRecommendationResponse;
+}
+
+export interface ResourceRecommendationRunListResponse {
+  items: ResourceRecommendationRunSummary[];
+  pagination?: {
+    page?: number;
+    pageSize?: number;
+    totalItems?: number;
+    totalPages?: number;
+    hasNextPage?: boolean;
+  };
+}
+
+export interface PlatformGrafanaSettings {
+  enabled?: boolean;
+  baseUrl?: string;
+  dashboardSlug?: string;
+  dashboardUid?: string;
+  refresh?: string;
+  embedMode?: 'direct' | 'proxy';
+  varNamespace?: string;
+  varPod?: string;
+  varNode?: string;
+  varDatasource?: string;
+  datasourceUid?: string;
+  authProxyEnabled?: boolean;
+  authProxyUserHeader?: string;
+  resourceRecommendation?: ResourceRecommendationSettings;
+  persisted?: boolean;
+  source?: string;
+}
+
+export interface SandboxMonitorPod {
+  name?: string;
+  namespace?: string;
+  nodeName?: string;
+  phase?: string;
+}
+
+export interface BuildContextManifestFile {
+  encoding: 'utf-8' | 'base64';
+  size: number;
+  sha256?: string;
+  ossKey?: string;
+}
+
+export interface BuildContextManifest {
+  version: number;
+  dockerfile: string;
+  buildVersion?: string;
+  remark?: string;
+  files: Record<string, BuildContextManifestFile>;
+}
+
+export interface BuildJob {
+  taskId: string;
+  imageName: string;
+  basicStruct: string;
+  status: 'building' | 'success' | 'failed' | 'cleaned' | string;
+  message: string;
+  createdAt?: string;
+  finishedAt?: string | null;
+}
+
+export interface BuildContextItem {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  buildVersion?: string;
+  remark?: string;
+  status: string;
+  manifest: BuildContextManifest;
+  dockerfilePath: string;
+  tarOssKey?: string | null;
+  tarSha256?: string | null;
+  tarSizeBytes?: number | null;
+  latestBuild?: BuildJob | null;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BuildContextListResponse {
+  persisted: boolean;
+  source: string;
+  items: BuildContextItem[];
+}
+
+export interface BuildContextFileResponse {
+  path: string;
+  encoding: 'utf-8' | 'base64';
+  content: string;
+}
+
+export interface SandboxMonitorResponse {
+  enabled?: boolean;
+  message?: string;
+  embedMode?: string;
+  iframeUrl?: string;
+  externalUrl?: string;
+  datasourceVar?: string;
+  datasourceUid?: string;
+  namespace?: string;
+  tenant?: string;
+  sandboxId?: string;
+  pods?: SandboxMonitorPod[];
+  timeRange?: { from?: string; to?: string };
+  warnings?: string[];
 }

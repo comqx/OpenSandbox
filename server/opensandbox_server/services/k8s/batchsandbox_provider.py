@@ -1010,6 +1010,9 @@ class BatchSandboxProvider(WorkloadProvider):
                 return expired
 
         if ready == 1 and pod_ip:
+            expired = self._expired_status(workload)
+            if expired is not None:
+                return expired
             state = "Running"
             reason = "POD_READY_WITH_IP"
             message = f"Pod is ready with IP ({ready}/{replicas} ready)"

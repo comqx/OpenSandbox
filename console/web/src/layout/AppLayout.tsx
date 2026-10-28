@@ -1,11 +1,11 @@
 // Copyright 2026 The OpenSandbox Authors
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,26 +15,50 @@
 import {
   AppstoreOutlined,
   CameraOutlined,
-  DashboardOutlined,
   DatabaseOutlined,
   FileSearchOutlined,
+  HomeOutlined,
   LogoutOutlined,
-  PlusOutlined,
+  PieChartOutlined,
+  PictureOutlined,
   SettingOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons';
-import { Layout, Menu, Typography } from 'antd';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Breadcrumb, Layout, Menu, Typography } from 'antd';
+import type { MenuProps } from 'antd';
+import { useMemo, useState } from 'react';
+import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthContext';
+import { buildRouteBreadcrumbs } from './routeBreadcrumbs';
+
+import './AppLayout.css';
 
 const { Header, Sider, Content } = Layout;
 
-function menuKey(pathname: string, isAdmin: boolean): string {
-  if (pathname === '/sandboxes/new') return '/sandboxes/new';
-  if (pathname.startsWith('/admin/sandboxes')) return '/admin/sandboxes';
-  if (pathname.startsWith('/sandboxes')) return isAdmin ? '/admin/sandboxes' : '/sandboxes';
-  return pathname;
+const PLATFORM_SUBMENU_KEY = 'platform';
+const IMAGE_SUBMENU_KEY = 'image';
+const SANDBOX_SUBMENU_KEY = 'sandbox';
+
+function SiderLogo() {
+  return (
+    <div className="console-sider-brand-logo" aria-hidden>
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <path
+          d="M18 3L31 10.5V25.5L18 33L5 25.5V10.5L18 3Z"
+          stroke="#4096ff"
+          strokeWidth="1.5"
+          fill="rgba(22, 119, 255, 0.15)"
+        />
+        <path
+          d="M18 11L24 14.5V21.5L18 25L12 21.5V14.5L18 11Z"
+          stroke="#69b1ff"
+          strokeWidth="1.2"
+          fill="rgba(105, 177, 255, 0.25)"
+        />
+      </svg>
+    </div>
+  );
 }
 
 export function AppLayout() {
@@ -43,76 +67,145 @@ export function AppLayout() {
   const location = useLocation();
 
   const isAdmin = user?.role === 'admin';
+  const sandboxListKey = isAdmin ? '/admin/sandboxes' : '/sandboxes';
+  const sandboxListLabel = isAdmin ? '沙箱（全局）' : '沙箱';
 
-  const items = [
-    { key: '/', icon: <DashboardOutlined />, label: '概览' },
-    isAdmin
-      ? { key: '/admin/sandboxes', icon: <UnorderedListOutlined />, label: '沙箱（全局）' }
-      : { key: '/sandboxes', icon: <UnorderedListOutlined />, label: '沙箱' },
-    ...(isAdmin
-      ? []
-      : [{ key: '/sandboxes/new', icon: <PlusOutlined />, label: '创建沙箱' }]),
-    { key: '/snapshots', icon: <CameraOutlined />, label: '快照' },
-    ...(isAdmin ? [{ key: '/pools', icon: <DatabaseOutlined />, label: 'Pool' }] : []),
-    { key: '/diagnostics', icon: <FileSearchOutlined />, label: '诊断' },
-    {
-      key: 'platform',
-      icon: <SettingOutlined />,
-      label: '平台',
-      children: [
-        { key: '/platform/health', label: '组件健康' },
-        { key: '/platform/version', label: '版本' },
-        ...(isAdmin
-          ? [
-              { key: '/platform/k8s/workloads', label: 'K8s 工作负载' },
-              { key: '/platform/k8s/events', label: 'K8s 事件' },
-            ]
-          : []),
-      ],
-    },
-  ];
+  const items: MenuProps['items'] = useMemo(
+    () => [
+      {
+        key: '/',
+        icon: <HomeOutlined />,
+        label: '概览',
+      },
+      {
+        key: SANDBOX_SUBMENU_KEY,
+        icon: <UnorderedListOutlined />,
+        label: '沙箱',
+        children: [
+          { key: sandboxListKey, label: sandboxListLabel },
+          { key: '/history/sandboxes', label: '申请历史' },
+          { key: '/history/resource-recommendations', label: '资源推荐' },
+        ],
+      },
+      {
+        key: IMAGE_SUBMENU_KEY,
+        icon: <PictureOutlined />,
+        label: '沙箱镜像管理',
+        children: [
+          { key: '/images/list', label: '沙箱镜像列表' },
+          { key: '/history/images', label: '镜像运行统计' },
+          { key: '/history/mirror-accel', label: '依赖包加速器' },
+          { key: '/images/sandbox-build', label: '沙箱镜像制作' },
+        ],
+      },
+      {
+        key: '/history/usage',
+        icon: <PieChartOutlined />,
+        label: '用量分摊',
+      },
+      {
+        key: '/snapshots',
+        icon: <CameraOutlined />,
+        label: '快照',
+      },
+      ...(isAdmin
+        ? [
+            {
+              key: '/pools',
+              icon: <DatabaseOutlined />,
+              label: 'Pool',
+            },
+          ]
+        : []),
+      {
+        key: '/diagnostics',
+        icon: <FileSearchOutlined />,
+        label: '诊断',
+      },
+      {
+        key: PLATFORM_SUBMENU_KEY,
+        icon: <SettingOutlined />,
+        label: '平台',
+        children: [
+          ...(isAdmin ? [{ key: '/platform/settings', label: '系统设置' }] : []),
+          { key: '/platform/health', label: '组件健康' },
+          { key: '/platform/version', label: '版本' },
+          { key: '/platform/k8s/workloads', label: 'K8s 工作负载' },
+          { key: '/platform/k8s/events', label: 'K8s 事件' },
+        ],
+      },
+    ],
+    [isAdmin, sandboxListKey, sandboxListLabel],
+  );
 
-  const selectedKey = menuKey(location.pathname, Boolean(isAdmin));
+  const selectedKey = useMemo(() => {
+    const path = location.pathname;
+    if (path === '/' || path === '') return '/';
+    if (path === '/history/sandboxes') return '/history/sandboxes';
+    if (path === '/history/resource-recommendations' || path.startsWith('/history/resource-recommendations/')) {
+      return '/history/resource-recommendations';
+    }
+    if (path === '/sandboxes/new') return sandboxListKey;
+    if (path.startsWith('/admin/sandboxes') || (isAdmin && path.startsWith('/sandboxes/'))) {
+      return sandboxListKey;
+    }
+    if (path === '/sandboxes' || path.startsWith('/sandboxes/')) return sandboxListKey;
+    return path;
+  }, [location.pathname, isAdmin, sandboxListKey]);
+
+  /** 「平台」「沙箱镜像管理」分组默认展开 */
+  const [openKeys, setOpenKeys] = useState<string[]>([
+    SANDBOX_SUBMENU_KEY,
+    PLATFORM_SUBMENU_KEY,
+    IMAGE_SUBMENU_KEY,
+  ]);
+
+  const brandSubtitle = isAdmin ? 'Admin' : user?.tenant ?? 'Tenant';
+  const params = useParams();
+  const breadcrumbItems = useMemo(
+    () => buildRouteBreadcrumbs(location.pathname, params, isAdmin),
+    [location.pathname, params, isAdmin],
+  );
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider breakpoint="lg" collapsedWidth={0}>
-        <div style={{ padding: 16 }}>
-          <Typography.Title level={5} style={{ color: '#fff', margin: 0 }}>
-            OpenSandbox
-          </Typography.Title>
-          <Typography.Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12 }}>
-            {isAdmin ? 'Admin' : user?.tenant}
-          </Typography.Text>
+      <Sider breakpoint="lg" collapsedWidth={0} width={228}>
+        <div className="console-sider-brand">
+          <div className="console-sider-brand-row">
+            <SiderLogo />
+            <div className="console-sider-brand-text">
+              <div className="console-sider-brand-title">OpenSandbox</div>
+              <div className="console-sider-brand-sub">{brandSubtitle}</div>
+            </div>
+          </div>
         </div>
         <Menu
           theme="dark"
           mode="inline"
+          className="console-sider-menu"
           selectedKeys={[selectedKey]}
-          defaultOpenKeys={['platform']}
+          openKeys={openKeys}
+          onOpenChange={setOpenKeys}
           items={items}
           onClick={({ key }) => {
-            if (key !== 'platform') navigate(key);
+            if (key === PLATFORM_SUBMENU_KEY || key === IMAGE_SUBMENU_KEY || key === SANDBOX_SUBMENU_KEY) {
+              return;
+            }
+            navigate(key);
           }}
         />
       </Sider>
       <Layout>
-        <Header
-          style={{
-            background: '#fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'flex-end',
-            paddingInline: 24,
-            gap: 16,
-          }}
-        >
-          <Typography.Text type="secondary">
-            <AppstoreOutlined /> {user?.namespace ?? 'platform'}
-          </Typography.Text>
-          <Typography.Link onClick={() => void logout()}>
-            <LogoutOutlined /> 退出
-          </Typography.Link>
+        <Header className="console-app-header">
+          <Breadcrumb className="console-app-header-breadcrumb" items={breadcrumbItems} />
+          <div className="console-app-header-actions">
+            <Typography.Text type="secondary">
+              <AppstoreOutlined /> {user?.namespace ?? 'platform'}
+            </Typography.Text>
+            <Typography.Link onClick={() => void logout()}>
+              <LogoutOutlined /> 退出
+            </Typography.Link>
+          </div>
         </Header>
         <Content style={{ margin: 24 }}>
           <Outlet />

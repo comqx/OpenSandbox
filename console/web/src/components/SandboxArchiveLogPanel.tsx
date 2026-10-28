@@ -1,21 +1,22 @@
 // Copyright 2026 The OpenSandbox Authors
-//
+// 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-//
+// 
 //     http://www.apache.org/licenses/LICENSE-2.0
-//
+// 
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { DownloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Space, Typography, message } from 'antd';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { ApiError, adminApi, sandboxApi } from '../api/client';
+import { adminApi, downloadArchiveLogs, sandboxApi } from '../api/client';
 import type { DiagnosticContentResponse } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { SandboxColoredLogViewer } from './SandboxColoredLogViewer';
@@ -27,11 +28,6 @@ type Props = {
   maxHeight?: number;
 };
 
-const ARCHIVE_DISABLED_CODES = new Set([
-  'NODEAGENT_ARCHIVE_DISABLED',
-  'NODEAGENT_OSS_NOT_CONFIGURED',
-]);
-
 export function SandboxArchiveLogPanel({
   sandboxId,
   tenant,
@@ -39,19 +35,18 @@ export function SandboxArchiveLogPanel({
   maxHeight = 420,
 }: Props) {
   const { user } = useAuth();
-  const requestSeq = useRef(0);
-  const [contentVersion, setContentVersion] = useState(0);
   const [data, setData] = useState<DiagnosticContentResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [viewerEpoch, setViewerEpoch] = useState(0);
   const [disabledNote, setDisabledNote] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
-  const fetchArchive = useCallback(async () => {
+  const fetchArchive = useCallback(async (options?: { pinTail?: boolean }) => {
     if (!sandboxId.trim()) return;
     if (user?.role === 'admin' && !tenant) {
       message.warning('Admin 查看归档日志需指定 tenant');
       return;
     }
-    const seq = ++requestSeq.current;
     setLoading(true);
     setDisabledNote(null);
     try {
@@ -59,25 +54,46 @@ export function SandboxArchiveLogPanel({
         user?.role === 'admin' && tenant
           ? await adminApi.archiveLogs(sandboxId.trim(), tenant)
           : await sandboxApi.archiveLogs(sandboxId.trim());
-      if (seq !== requestSeq.current) return;
       setData(result);
-      setContentVersion((v) => v + 1);
+      if (options?.pinTail ?? true) {
+        setViewerEpoch((epoch) => epoch + 1);
+      }
     } catch (e) {
-      if (seq !== requestSeq.current) return;
       setData(null);
-      if (e instanceof ApiError && ARCHIVE_DISABLED_CODES.has(e.code)) {
-        setDisabledNote(e.message);
+      const msg = e instanceof Error ? e.message : '加载归档失败';
+      if (msg.includes('NODEAGENT') || msg.includes('DISABLED') || msg.includes('OSS')) {
+        setDisabledNote(msg);
       } else {
-        message.error(e instanceof Error ? e.message : '加载归档失败');
+        message.error(msg);
       }
     } finally {
-      if (seq === requestSeq.current) setLoading(false);
+      setLoading(false);
+    }
+  }, [sandboxId, tenant, user?.role]);
+
+  const handleDownload = useCallback(async () => {
+    if (!sandboxId.trim()) return;
+    if (user?.role === 'admin' && !tenant) {
+      message.warning('Admin 下载归档日志需指定 tenant');
+      return;
+    }
+    setDownloading(true);
+    try {
+      await downloadArchiveLogs(
+        sandboxId.trim(),
+        user?.role === 'admin' && tenant ? tenant : undefined,
+      );
+      message.success('已开始下载归档日志');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '下载归档失败');
+    } finally {
+      setDownloading(false);
     }
   }, [sandboxId, tenant, user?.role]);
 
   useEffect(() => {
-    if (autoLoad && sandboxId) void fetchArchive();
-  }, [autoLoad, sandboxId, tenant, fetchArchive]);
+    if (autoLoad && sandboxId) void fetchArchive({ pinTail: true });
+  }, [autoLoad, sandboxId, fetchArchive]);
 
   if (disabledNote) {
     return (
@@ -93,11 +109,6 @@ export function SandboxArchiveLogPanel({
             </Typography.Paragraph>
           </>
         }
-        action={
-          <Button size="small" onClick={() => void fetchArchive()}>
-            重试
-          </Button>
-        }
       />
     );
   }
@@ -105,8 +116,12 @@ export function SandboxArchiveLogPanel({
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" loading={loading} onClick={() => void fetchArchive()}>
+        <Button type="primary" loading={loading} onClick={() => void fetchArchive({ pinTail: true })}>
           刷新归档
+        </Button>
+        <Button icon={<DownloadOutlined />} loading={downloading} onClick={() => void handleDownload()}>
+          下载归档
+          {data?.archive?.objectSizeBytes != null ? ` (${data.archive.objectSizeBytes} bytes)` : ''}
         </Button>
         {data?.archive?.objectKey && (
           <Typography.Text type="secondary" copyable={{ text: data.archive.objectKey }}>
@@ -114,15 +129,15 @@ export function SandboxArchiveLogPanel({
           </Typography.Text>
         )}
       </Space>
-      {data?.warnings?.map((w, i) => (
-        <Alert key={`${i}-${w.slice(0, 40)}`} type="info" showIcon message={w} style={{ marginBottom: 8 }} />
+      {data?.warnings?.map((w) => (
+        <Alert key={w} type="info" showIcon message={w} style={{ marginBottom: 8 }} />
       ))}
       {data?.truncated && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 8 }}
-          message="内容已按 maxBytes 截断，请在 OSS 下载完整对象"
+          message="内容已按 maxBytes 截断，请使用「下载归档」获取完整对象"
         />
       )}
       {!data && !loading && (
@@ -132,7 +147,7 @@ export function SandboxArchiveLogPanel({
         <SandboxColoredLogViewer
           content={data.content}
           maxHeight={maxHeight}
-          contentKey={`archive-${contentVersion}`}
+          contentKey={`archive-${viewerEpoch}`}
         />
       )}
     </div>

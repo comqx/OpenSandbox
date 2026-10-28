@@ -9,8 +9,11 @@
 | `BFF_SESSION_SECRET` | yes | Session cookie signing secret (≥32 random chars) |
 | `BFF_ADMIN_TOKEN` | yes | Admin login password; **never** in frontend build |
 | `BFF_COOKIE_SECURE` | no | Set `true` behind HTTPS |
-| `BFF_CORS_ORIGINS` | no | Comma-separated SPA origins. Default `http://localhost:5173`. `*` is rejected because session cookies use credentials |
+| `BFF_CORS_ORIGINS` | no | Comma-separated SPA origins; `*` dev only |
+| `BFF_AGGREGATE_CACHE_SECONDS` | no | Admin list cache; default `0` |
 | `BFF_HTTP_TIMEOUT_SECONDS` | no | Upstream timeout; default `30` |
+| `BFF_EXECD_PROTOCOL` | no | Scheme for execd endpoints that omit one. Empty follows `LIFECYCLE_API_BASE` (`http` or `https`) |
+| `BFF_SHELL_ENDPOINT_MODE` | no | `server` (default) dials `{LIFECYCLE_API_BASE}/sandboxes/{id}/proxy/44772`. `gateway` dials the public ingress endpoint from `GET /endpoints/44772` |
 
 ### Optional: node-agent integration
 
@@ -29,9 +32,47 @@
 | `BFF_NODEAGENT_OSS_*` | empty | Read-only OSS credentials (same key layout as node-agent writer) |
 | `BFF_NODEAGENT_ARCHIVE_MAX_BYTES` | `524288` | Max bytes per archive response |
 
-In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) to list pods. Archive logs require node-agent **OSS sink** (file sink on hostPath is not readable cluster-wide).
+In-cluster BFF needs [console-bff-rbac.example.yaml](../k8s/console-bff-rbac.example.yaml) to list pods and, for node image preheat, to list nodes and create or delete the short-lived pull Pods. Archive logs require node-agent **OSS sink** (file sink on hostPath is not readable cluster-wide).
 
-Future optional features (history PostgreSQL, Grafana monitor) are documented in [07-sandbox-history.md](./07-sandbox-history.md) and tracked on branch `feat/console-extended-scope`, not in the MVP PR.
+### Optional: sandbox history (PostgreSQL)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BFF_HISTORY_ENABLED` | `false` | Enable `sandbox_lifecycle_history` and `/api/history/*` |
+| `BFF_HISTORY_DATABASE_URL` | empty | Same DB as server `[store.postgresql]`; see [07-sandbox-history.md](./07-sandbox-history.md) |
+| `BFF_HISTORY_RECONCILE_ON_READ` | `false` | When `true`, history API reads scan Lifecycle before responding. Leave `false`; the poller does the scan |
+| `BFF_HISTORY_RECONCILE_INTERVAL_SECONDS` | `600` | How often the BFF reconciles every tenant. `0` disables the poller. A past `expires_at` is the close time |
+
+### Optional: sandbox image build context (PostgreSQL + OSS)
+
+Requires `BFF_HISTORY_ENABLED` (table `console_sandbox_build_context`). Set `BFF_IMAGE_BUILD_ENABLED=true` and OSS credentials. Empty `BFF_IMAGE_BUILD_OSS_*` falls back to `BFF_NODEAGENT_OSS_*` with prefix `BFF_IMAGE_BUILD_OSS_KEY_PREFIX` (default `console/image-build`). See [03-bff-api.md](./03-bff-api.md#sandbox-image-build-context-phase-2a).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BFF_IMAGE_BUILD_ENABLED` | `false` | `/api/images/build-contexts/*` |
+| `BFF_IMAGE_BUILD_MAX_FILES` | `256` | Per-context file count |
+| `BFF_IMAGE_BUILD_MAX_FILE_BYTES` | `5242880` | Single file cap |
+| `BFF_IMAGE_BUILD_MAX_TOTAL_BYTES` | `52428800` | Total uncompressed cap |
+| `BFF_IMAGE_BUILD_OSS_*` | empty | Dedicated bucket/prefix (recommended) |
+| `BFF_IMAGE_BUILDER_BASE_URL` | empty | In-cluster image builder root, no path, for example `http://image-builder:8000`. Empty leaves draft editing on and rejects remote submit with `503 IMAGE_BUILDER_NOT_CONFIGURED` |
+
+### Optional: Grafana sandbox monitor
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BFF_GRAFANA_ENABLED` | `false` | Sandbox detail **Monitor** tab |
+| `BFF_GRAFANA_BASE_URL` | empty | Upstream Grafana. `direct` must be a browser-reachable `https://` URL. `proxy` may be an in-cluster `http://` Service; the iframe is `/api/grafana/...` on the console origin |
+| `BFF_GRAFANA_DASHBOARD_SLUG` | `opensandbox-pod-node` | Dashboard URL segment |
+| `BFF_GRAFANA_DASHBOARD_UID` | empty | Dashboard UID |
+| `BFF_GRAFANA_REFRESH` | `30s` | Embed refresh query param |
+| `BFF_GRAFANA_EMBED_MODE` | `direct` | `direct` iframe or `proxy` via BFF `/api/grafana/...` |
+| `BFF_GRAFANA_VAR_*` | see `.env.example` | Template variable names |
+| `BFF_GRAFANA_DATASOURCE_UID` | `prometheus` | Datasource name/UID |
+| `BFF_GRAFANA_AUTH_PROXY_*` | | Proxy mode headers |
+| `BFF_PLATFORM_SETTINGS_PATH` | empty | JSON overrides when history DB is off |
+| `BFF_IMAGE_CATALOG_PATH` | empty | JSON file for the sandbox image catalog when history DB is off |
+
+Admins can override Grafana settings in **Platform → System settings** (PostgreSQL or `BFF_PLATFORM_SETTINGS_PATH`). The console does **not** store Grafana passwords.
 
 ## `tenants.toml` source
 

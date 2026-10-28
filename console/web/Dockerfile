@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# 默认非 root nginx（uid 101，监听 8080）。内网：--build-arg NODE_IMAGE=... --build-arg NGINX_IMAGE=...
+# 默认官方镜像；内网：--build-arg NODE_IMAGE=... --build-arg NGINX_IMAGE=...
+# npm 官方源超时时可改回：--build-arg NPM_REGISTRY=https://registry.npmjs.org
 # 平台由 buildx --platform linux/amd64 指定
 ARG NODE_IMAGE=node:22-alpine
-ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.27-alpine
+ARG NGINX_IMAGE=nginx:1.27-alpine
 
 FROM ${NODE_IMAGE} AS build
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry="${NPM_REGISTRY}" --fetch-retries=5 --fetch-timeout=300000
 COPY . .
 RUN npm run build
 

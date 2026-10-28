@@ -25,12 +25,10 @@ export function ComponentHealthPage() {
   const [bffHealth, setBffHealth] = useState<{ status?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [usedFallback, setUsedFallback] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       setLoading(true);
-      setLoadError(null);
       try {
         if (user?.role === 'admin') {
           setSummary(await adminApi.platformSummary());
@@ -39,17 +37,12 @@ export function ComponentHealthPage() {
           setUsedFallback(true);
           setBffHealth(await platformApi.bffHealth());
         }
-      } catch (err) {
+      } catch {
         setUsedFallback(true);
-        const primary = err instanceof Error ? err.message : '加载平台摘要失败';
         try {
           setBffHealth(await platformApi.bffHealth());
-          setLoadError(primary);
-        } catch (fallbackErr) {
+        } catch {
           setBffHealth(null);
-          const secondary =
-            fallbackErr instanceof Error ? fallbackErr.message : 'BFF /health 不可用';
-          setLoadError(`${primary}；${secondary}`);
         }
       } finally {
         setLoading(false);
@@ -62,9 +55,6 @@ export function ComponentHealthPage() {
   return (
     <div>
       <Typography.Title level={4}>组件健康</Typography.Title>
-      {loadError && (
-        <Alert type="warning" showIcon message={loadError} style={{ marginBottom: 16 }} />
-      )}
       {usedFallback && (
         <Alert
           type="info"

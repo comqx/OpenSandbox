@@ -1,4 +1,5 @@
-# BFF 在集群内：node-agent 探活 + 租户 namespace Pod/Event + system namespace Deployment
+# BFF 在集群内：node-agent 探活、租户 namespace Pod/Event、system namespace Deployment，
+# 以及镜像预热用的节点列表和一次性 Pod。
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -13,6 +14,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "events"]
     verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list"]

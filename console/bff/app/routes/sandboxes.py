@@ -22,9 +22,9 @@ from app.config import get_settings
 from app.deps import get_session_payload, require_tenant_session
 from app.lifecycle import LifecycleClient
 from app.runtime import attach_runtime_summary
-from app.nodeagent_archive import fetch_archive_logs
-from app.query_params import parse_archive_max_bytes
 from app.routes.proxy_utils import passthrough_json
+from app.nodeagent_archive import fetch_archive_logs, fetch_archive_logs_download
+from app.history import tasks as history_tasks
 from app.routes.session_keys import tenant_api_key, tenant_namespace_for_session
 
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
@@ -45,7 +45,10 @@ async def list_sandboxes(
     )
     data = await passthrough_json(resp)
     if isinstance(data, dict) and "items" in data:
-        data["items"] = [attach_runtime_summary(item) for item in data["items"]]
+        enriched = [attach_runtime_summary(item) for item in data["items"]]
+        data["items"] = enriched
+        for item in enriched:
+            history_tasks.schedule_upsert(payload, item)
     return data
 
 
@@ -59,7 +62,9 @@ async def get_sandbox(
     resp = await client.request(tenant_api_key(payload), "GET", f"/sandboxes/{sandbox_id}")
     data = await passthrough_json(resp)
     if isinstance(data, dict):
-        return attach_runtime_summary(data)
+        enriched = attach_runtime_summary(data)
+        history_tasks.schedule_upsert(payload, enriched)
+        return enriched
     return data
 
 
@@ -73,7 +78,9 @@ async def create_sandbox(
     resp = await client.request(tenant_api_key(payload), "POST", "/sandboxes", json_body=body)
     data = await passthrough_json(resp)
     if isinstance(data, dict):
-        return attach_runtime_summary(data)
+        enriched = attach_runtime_summary(data)
+        history_tasks.schedule_upsert(payload, enriched, create_request=body)
+        return enriched
     return data
 
 
@@ -84,7 +91,21 @@ async def delete_sandbox(
 ) -> Any:
     require_tenant_session(payload)
     client = LifecycleClient(get_settings())
-    resp = await client.request(tenant_api_key(payload), "DELETE", f"/sandboxes/{sandbox_id}")
+    api_key = tenant_api_key(payload)
+    final_sandbox: dict | None = None
+    get_resp = await client.request(api_key, "GET", f"/sandboxes/{sandbox_id}")
+    if get_resp.status_code < 400:
+        try:
+            final_sandbox = get_resp.json()
+        except Exception:
+            final_sandbox = None
+    resp = await client.request(api_key, "DELETE", f"/sandboxes/{sandbox_id}")
+    history_tasks.schedule_mark_deleted(
+        sandbox_id,
+        tenant=str(payload.get("tenant") or ""),
+        namespace=str(payload.get("namespace") or ""),
+        final_sandbox=final_sandbox if isinstance(final_sandbox, dict) else None,
+    )
     return await passthrough_json(resp)
 
 
@@ -104,7 +125,9 @@ async def renew_sandbox(
     )
     data = await passthrough_json(resp)
     if isinstance(data, dict):
-        return attach_runtime_summary(data)
+        enriched = attach_runtime_summary(data)
+        history_tasks.schedule_upsert(payload, enriched)
+        return enriched
     return data
 
 
@@ -155,6 +178,16 @@ async def create_snapshot(
     return await passthrough_json(resp)
 
 
+@router.get("/{sandbox_id}/logs/archive/download")
+async def download_sandbox_archive_logs(
+    sandbox_id: str,
+    payload: dict = Depends(get_session_payload),
+) -> Any:
+    require_tenant_session(payload)
+    namespace = tenant_namespace_for_session(payload)
+    return await fetch_archive_logs_download(get_settings(), namespace, sandbox_id)
+
+
 @router.get("/{sandbox_id}/logs/archive")
 async def get_sandbox_archive_logs(
     sandbox_id: str,
@@ -163,16 +196,12 @@ async def get_sandbox_archive_logs(
 ) -> Any:
     require_tenant_session(payload)
     namespace = tenant_namespace_for_session(payload)
-    settings = get_settings()
-    max_bytes = parse_archive_max_bytes(
-        request.query_params.get("maxBytes"),
-        cap=settings.bff_nodeagent_archive_max_bytes,
-    )
+    max_bytes = request.query_params.get("maxBytes")
     return await fetch_archive_logs(
-        settings,
+        get_settings(),
         namespace,
         sandbox_id,
-        max_bytes=max_bytes,
+        max_bytes=int(max_bytes) if max_bytes else None,
     )
 
 

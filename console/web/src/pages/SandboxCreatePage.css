@@ -1,0 +1,76 @@
+.sandbox-create {
+  max-width: 880px;
+}
+
+.sandbox-create-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.create-resource-grid,
+.create-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.create-inline-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.create-pair-row,
+.create-arg-row,
+.create-rule-row {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.create-pair-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 32px;
+}
+
+.create-arg-row {
+  grid-template-columns: minmax(0, 1fr) 32px;
+}
+
+.create-rule-row {
+  grid-template-columns: 120px minmax(0, 1fr) 32px;
+}
+
+.create-pair-row .ant-form-item,
+.create-arg-row .ant-form-item,
+.create-rule-row .ant-form-item {
+  margin-bottom: 8px;
+}
+
+.create-block {
+  margin-bottom: 16px;
+}
+
+.create-volume,
+.create-hook {
+  margin-bottom: 12px;
+  padding: 12px 12px 4px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+}
+
+.create-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+  .create-resource-grid,
+  .create-inline-grid,
+  .create-inline-grid.two,
+  .create-pair-row,
+  .create-rule-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

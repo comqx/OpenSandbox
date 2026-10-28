@@ -17,10 +17,6 @@ spec:
       containers:
         - name: web
           image: YOUR_REGISTRY/opensandbox-console-web:0.1.0
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 101
-            allowPrivilegeEscalation: false
           ports:
             - containerPort: 8080
           readinessProbe:
