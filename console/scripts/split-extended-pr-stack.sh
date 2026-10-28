@@ -29,12 +29,12 @@ Usage:
       pr-id: e1 | e2 | e3 | e4 | e5 | e6 | e7 | e8
 
 Example:
-  ./console/scripts/split-extended-pr-stack.sh branch e7 origin/main
+  ./console/scripts/split-extended-pr-stack.sh branch e7 main
 EOF
 }
 
 # Commas separate commits; order matters (oldest first).
-# SHAs from feat/console-extended-scope after restack (2026-10-13). Re-run `list` after history rewrite.
+# SHAs from custom (formerly feat/console-extended-scope) after restack. Re-run `list` after history rewrite.
 declare -A PR_COMMITS=(
   [e1]="c0d40cbc,aecec41e,f53fcf8a,3f08fb7f,077d0f20,6ba7e9ba"
   [e2]="b40a7cfc,9350e07f"
