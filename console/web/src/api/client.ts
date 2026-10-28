@@ -14,16 +14,26 @@
 
 import type {
   DiagnosticContentResponse,
+  PaginatedSandboxes,
   K8sEventRow,
   K8sListResponse,
   K8sWorkloadRow,
-  PaginatedSandboxes,
+  PlatformGrafanaSettings,
   PlatformSummary,
-  PoolItem,
+  SandboxImageCatalogInput,
+  SandboxImageCatalogItem,
+  SandboxImageCatalogResponse,
+  PreheatHistoryResponse,
+  PreheatNodesResponse,
+  PreheatStatusResponse,
+  BuildContextItem,
+  BuildContextListResponse,
+  BuildJob,
+  BuildContextFileResponse,
+  SandboxMonitorResponse,
   PoolListResponse,
-  PoolUpsertRequest,
+  PoolItem,
   RuntimeStats,
-  TenantListResponse,
   Sandbox,
   SessionUser,
   Snapshot,
@@ -91,9 +101,7 @@ export async function apiRequest<T>(
     headers,
   });
 
-  const requestPath = path.split('?')[0];
-  const isLogin = requestPath === '/api/auth/tenant' || requestPath === '/api/auth/admin';
-  if (res.status === 401 && !isLogin) {
+  if (res.status === 401) {
     onUnauthorized?.();
     throw new ApiError('UNAUTHORIZED', 'Session required', 401);
   }
@@ -113,6 +121,47 @@ export async function apiRequest<T>(
 
 export function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function filenameFromContentDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const quoted = /filename="([^"]+)"/.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const bare = /filename=([^;]+)/.exec(header);
+  return bare?.[1]?.trim() || fallback;
+}
+
+export async function downloadArchiveLogs(sandboxId: string, tenant?: string): Promise<void> {
+  const path =
+    tenant != null && tenant.trim() !== ''
+      ? `/api/admin/sandboxes/${encodeURIComponent(sandboxId)}/logs/archive/download?${new URLSearchParams({ tenant: tenant.trim() })}`
+      : `/api/sandboxes/${encodeURIComponent(sandboxId)}/logs/archive/download`;
+
+  const res = await fetch(path, { credentials: 'include' });
+  if (res.status === 401) {
+    onUnauthorized?.();
+    throw new ApiError('UNAUTHORIZED', 'Session required', 401);
+  }
+  if (!res.ok) {
+    const body = await parseBody(res);
+    const err = extractError(body, res.statusText);
+    throw new ApiError(err.code, err.message, res.status);
+  }
+  const blob = await res.blob();
+  const filename = filenameFromContentDisposition(
+    res.headers.get('Content-Disposition'),
+    `${sandboxId}-archive.log`,
+  );
+  downloadBlob(blob, filename);
 }
 
 export const authApi = {
@@ -181,16 +230,6 @@ export const sandboxApi = {
 };
 
 export const adminApi = {
-  listTenants: () => apiRequest<TenantListResponse>('/api/admin/tenants'),
-  sandboxes: (query: Record<string, string | number | undefined>) => {
-    const params = new URLSearchParams();
-    Object.entries(query).forEach(([k, v]) => {
-      if (v !== undefined && v !== '') params.set(k, String(v));
-    });
-    const qs = params.toString();
-    return apiRequest<PaginatedSandboxes>(`/api/admin/sandboxes${qs ? `?${qs}` : ''}`);
-  },
-  runtimeStats: () => apiRequest<RuntimeStats>('/api/admin/stats/runtime'),
   diagnosticLogs: (sandboxId: string, tenant: string, scope: string) => {
     const params = new URLSearchParams({ tenant, scope });
     return apiRequest<DiagnosticContentResponse>(
@@ -210,6 +249,17 @@ export const adminApi = {
       `/api/admin/sandboxes/${encodeURIComponent(sandboxId)}/logs/archive?${params}`,
     );
   },
+  listTenants: () =>
+    apiRequest<{ items: { name: string; namespace?: string }[] }>('/api/admin/tenants'),
+  sandboxes: (query: Record<string, string | number | undefined>) => {
+    const params = new URLSearchParams();
+    Object.entries(query).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') params.set(k, String(v));
+    });
+    const qs = params.toString();
+    return apiRequest<PaginatedSandboxes>(`/api/admin/sandboxes${qs ? `?${qs}` : ''}`);
+  },
+  runtimeStats: () => apiRequest<RuntimeStats>('/api/admin/stats/runtime'),
   platformSummary: () => apiRequest<PlatformSummary>('/api/admin/platform/summary'),
   getSandbox: (id: string, tenant: string) =>
     apiRequest<Sandbox>(
@@ -246,13 +296,10 @@ export const adminApi = {
       { method: 'POST', body: JSON.stringify(body ?? {}) },
     );
   },
-  listSnapshots: (tenant: string, query?: Record<string, string | number | undefined>) => {
-    const params = new URLSearchParams({ tenant });
-    Object.entries(query ?? {}).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') params.set(key, String(value));
-    });
-    return apiRequest<SnapshotListResponse>(`/api/admin/snapshots?${params}`);
-  },
+  listSnapshots: (tenant: string) =>
+    apiRequest<SnapshotListResponse>(
+      `/api/admin/snapshots?tenant=${encodeURIComponent(tenant)}`,
+    ),
   deleteSnapshot: (snapshotId: string, tenant: string) =>
     apiRequest<void>(
       `/api/admin/snapshots/${encodeURIComponent(snapshotId)}?tenant=${encodeURIComponent(tenant)}`,
@@ -268,6 +315,10 @@ export const adminApi = {
       `/api/admin/k8s/workloads${qs ? `?${qs}` : ''}`,
     );
   },
+  sandboxMonitor: (sandboxId: string, tenant: string) =>
+    apiRequest<SandboxMonitorResponse>(
+      `/api/admin/sandboxes/${encodeURIComponent(sandboxId)}/monitor?tenant=${encodeURIComponent(tenant)}`,
+    ),
   k8sEvents: (query: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
     Object.entries(query).forEach(([k, v]) => {
@@ -293,9 +344,9 @@ export const snapshotApi = {
 export const poolApi = {
   list: () => apiRequest<PoolListResponse>('/api/pools'),
   get: (name: string) => apiRequest<PoolItem>(`/api/pools/${encodeURIComponent(name)}`),
-  create: (body: PoolUpsertRequest) =>
+  create: (body: Record<string, unknown>) =>
     apiRequest<PoolItem>('/api/pools', { method: 'POST', body: JSON.stringify(body) }),
-  update: (name: string, body: PoolUpsertRequest) =>
+  update: (name: string, body: Record<string, unknown>) =>
     apiRequest<PoolItem>(`/api/pools/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify(body),
@@ -304,7 +355,277 @@ export const poolApi = {
     apiRequest<void>(`/api/pools/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 };
 
+function tenantQueryParam(tenant?: string): string {
+  if (!tenant) {
+    return '';
+  }
+  return `?tenant=${encodeURIComponent(tenant)}`;
+}
+
+export const buildContextApi = {
+  list: (tenant?: string) =>
+    apiRequest<BuildContextListResponse>(`/api/images/build-contexts${tenantQueryParam(tenant)}`),
+  create: (
+    body: {
+      displayName: string;
+      dockerfilePath?: string;
+      buildVersion?: string;
+      remark?: string;
+    },
+    tenant?: string,
+  ) =>
+    apiRequest<BuildContextItem>(`/api/images/build-contexts${tenantQueryParam(tenant)}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  get: (id: string, tenant?: string) =>
+    apiRequest<BuildContextItem>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
+    ),
+  patch: (
+    id: string,
+    body: {
+      displayName?: string;
+      dockerfilePath?: string;
+      buildVersion?: string;
+      remark?: string;
+    },
+    tenant?: string,
+  ) =>
+    apiRequest<BuildContextItem>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+  putFile: (
+    id: string,
+    path: string,
+    body: { encoding: 'utf-8' | 'base64'; content: string },
+    tenant?: string,
+  ) =>
+    apiRequest<{ path: string; sha256: string; size: number }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/files/${path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}${tenantQueryParam(tenant)}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
+  getFile: (id: string, path: string, tenant?: string) =>
+    apiRequest<BuildContextFileResponse>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/files/${path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}${tenantQueryParam(tenant)}`,
+    ),
+  buildTar: (id: string, tenant?: string) =>
+    apiRequest<{ tarSha256: string; tarSizeBytes: number; downloadUrl: string }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/tar${tenantQueryParam(tenant)}`,
+      { method: 'POST' },
+    ),
+  getTarUrl: (id: string, tenant?: string) =>
+    apiRequest<{ downloadUrl: string; tarSha256?: string; tarSizeBytes?: number }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/tar${tenantQueryParam(tenant)}`,
+    ),
+  deleteFile: (id: string, path: string, tenant?: string) =>
+    apiRequest<void>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/files/${path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}${tenantQueryParam(tenant)}`,
+      { method: 'DELETE' },
+    ),
+  remove: (id: string, tenant?: string) =>
+    apiRequest<void>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}${tenantQueryParam(tenant)}`,
+      { method: 'DELETE' },
+    ),
+  submitBuild: (
+    id: string,
+    body: { imageName: string; basicStruct: '1' | '2' },
+    tenant?: string,
+  ) =>
+    apiRequest<BuildJob & { contextId: string }>(
+      `/api/images/build-contexts/${encodeURIComponent(id)}/builds${tenantQueryParam(tenant)}`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+};
+
+export const imageCatalogApi = {
+  list: () => apiRequest<SandboxImageCatalogResponse>('/api/images/catalog'),
+  create: (body: SandboxImageCatalogInput) =>
+    apiRequest<SandboxImageCatalogItem>('/api/images/catalog', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  update: (id: string, body: SandboxImageCatalogInput) =>
+    apiRequest<SandboxImageCatalogItem>(`/api/images/catalog/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  remove: (id: string) =>
+    apiRequest<void>(`/api/images/catalog/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  preheatNodes: (id: string, tenant?: string) => {
+    const params = new URLSearchParams();
+    if (tenant) params.set('tenant', tenant);
+    const qs = params.toString();
+    return apiRequest<PreheatNodesResponse>(
+      `/api/images/catalog/${encodeURIComponent(id)}/preheat/nodes${qs ? `?${qs}` : ''}`,
+    );
+  },
+  startPreheat: (id: string, nodeNames: string[], tenant?: string) =>
+    apiRequest<PreheatStatusResponse>(`/api/images/catalog/${encodeURIComponent(id)}/preheat`, {
+      method: 'POST',
+      body: JSON.stringify({ nodeNames, ...(tenant ? { tenant } : {}) }),
+    }),
+  preheatHistory: (id: string) =>
+    apiRequest<PreheatHistoryResponse>(`/api/images/catalog/${encodeURIComponent(id)}/preheats`),
+};
+
 export const platformApi = {
   version: () => apiRequest<Record<string, unknown>>('/api/version'),
   bffHealth: () => apiRequest<{ status: string }>('/health'),
+};
+
+export const platformSettingsApi = {
+  get: () => apiRequest<PlatformGrafanaSettings>('/api/admin/platform/settings'),
+  update: (body: Partial<PlatformGrafanaSettings>) =>
+    apiRequest<PlatformGrafanaSettings>('/api/admin/platform/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+};
+
+export const monitorApi = {
+  getSandboxMonitor: (sandboxId: string) =>
+    apiRequest<SandboxMonitorResponse>(
+      `/api/sandboxes/${encodeURIComponent(sandboxId)}/monitor`,
+    ),
+};
+
+export const historyApi = {
+  getSandbox: (sandboxId: string, tenant?: string) => {
+    const qs = tenant ? `?tenant=${encodeURIComponent(tenant)}` : '';
+    return apiRequest<import('./types').SandboxHistoryItem>(
+      `/api/history/sandboxes/${encodeURIComponent(sandboxId)}${qs}`,
+    );
+  },
+  listSandboxes: (query?: Record<string, string | number | boolean | undefined>) => {
+    const params = new URLSearchParams();
+    Object.entries(query ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') params.set(k, String(v));
+    });
+    const qs = params.toString();
+    return apiRequest<import('./types').SandboxHistoryListResponse>(
+      `/api/history/sandboxes${qs ? `?${qs}` : ''}`,
+    );
+  },
+  createdSeries: (query: { from: string; to: string; bucket: 'day' | 'month'; tenant?: string }) => {
+    const params = new URLSearchParams({
+      from: query.from,
+      to: query.to,
+      bucket: query.bucket,
+    });
+    if (query.tenant) params.set('tenant', query.tenant);
+    return apiRequest<import('./types').CreatedSeriesResponse>(`/api/history/created-series?${params}`);
+  },
+  stats: (query?: { tenant?: string; from?: string; to?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.tenant) params.set('tenant', query.tenant);
+    if (query?.from) params.set('from', query.from);
+    if (query?.to) params.set('to', query.to);
+    const qs = params.toString();
+    return apiRequest<import('./types').SandboxHistoryStats>(
+      `/api/history/stats${qs ? `?${qs}` : ''}`,
+    );
+  },
+  usage: (query: { from: string; to: string; tenant?: string }) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to });
+    if (query.tenant) params.set('tenant', query.tenant);
+    return apiRequest<import('./types').TenantUsageResponse>(`/api/history/usage?${params}`);
+  },
+  imageStats: (query?: { from?: string; to?: string; tenant?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.from) params.set('from', query.from);
+    if (query?.to) params.set('to', query.to);
+    if (query?.tenant) params.set('tenant', query.tenant);
+    const qs = params.toString();
+    return apiRequest<import('./types').ImageStatsResponse>(
+      `/api/history/images/stats${qs ? `?${qs}` : ''}`,
+    );
+  },
+  resourceRecommendations: (query?: {
+    window?: '7d' | '15d';
+    from?: string;
+    to?: string;
+    label?: string;
+    sandboxId?: string;
+    tenant?: string;
+  }) => {
+    const params = new URLSearchParams();
+    if (query?.from && query?.to) {
+      params.set('from', query.from);
+      params.set('to', query.to);
+    } else {
+      params.set('window', query?.window ?? '7d');
+    }
+    if (query?.label) params.set('label', query.label);
+    if (query?.sandboxId) params.set('sandboxId', query.sandboxId);
+    if (query?.tenant) params.set('tenant', query.tenant);
+    return apiRequest<import('./types').ResourceRecommendationResponse>(
+      `/api/history/resource-recommendations?${params.toString()}`,
+    );
+  },
+  resourceRecommendationQueryParams: (query?: {
+    window?: '7d' | '15d';
+    from?: string;
+    to?: string;
+    label?: string;
+    sandboxId?: string;
+    tenant?: string;
+  }) => {
+    const params = new URLSearchParams();
+    if (query?.from && query?.to) {
+      params.set('from', query.from);
+      params.set('to', query.to);
+    } else if (query?.window) {
+      params.set('window', query.window);
+    } else if (!query?.from) {
+      params.set('window', '7d');
+    }
+    if (query?.label) params.set('label', query.label);
+    if (query?.sandboxId) params.set('sandboxId', query.sandboxId);
+    if (query?.tenant) params.set('tenant', query.tenant);
+    return params;
+  },
+  createResourceRecommendationRun: (query?: {
+    window?: '7d' | '15d';
+    from?: string;
+    to?: string;
+    label?: string;
+    sandboxId?: string;
+    tenant?: string;
+  }) => {
+    const params = historyApi.resourceRecommendationQueryParams(query);
+    return apiRequest<import('./types').ResourceRecommendationRunDetail>(
+      `/api/history/resource-recommendation-runs?${params.toString()}`,
+      { method: 'POST' },
+    );
+  },
+  listResourceRecommendationRuns: (query?: { page?: number; pageSize?: number; tenant?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.page) params.set('page', String(query.page));
+    if (query?.pageSize) params.set('pageSize', String(query.pageSize));
+    if (query?.tenant) params.set('tenant', query.tenant);
+    const qs = params.toString();
+    return apiRequest<import('./types').ResourceRecommendationRunListResponse>(
+      `/api/history/resource-recommendation-runs${qs ? `?${qs}` : ''}`,
+    );
+  },
+  getResourceRecommendationRun: (runId: string, query?: { tenant?: string }) => {
+    const params = new URLSearchParams();
+    if (query?.tenant) params.set('tenant', query.tenant);
+    const qs = params.toString();
+    return apiRequest<import('./types').ResourceRecommendationRunDetail>(
+      `/api/history/resource-recommendation-runs/${encodeURIComponent(runId)}${qs ? `?${qs}` : ''}`,
+    );
+  },
 };

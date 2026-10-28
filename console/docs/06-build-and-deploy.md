@@ -58,6 +58,7 @@ docker buildx build --platform "${PLATFORM}" \
 docker buildx build --platform "${PLATFORM}" \
   --build-arg NODE_IMAGE="${NODE_IMAGE:-node:22-alpine}" \
   --build-arg NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.27-alpine}" \
+  --build-arg NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}" \
   -t "${REGISTRY}/opensandbox-console-web:${TAG}" \
   -f console/web/Dockerfile \
   --push \

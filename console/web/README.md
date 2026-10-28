@@ -34,8 +34,9 @@ Output in `dist/`; serve via nginx or ingress (same origin as BFF recommended).
 |------|--------|
 | `/` | Overview KPIs |
 | `/sandboxes`, `/sandboxes/new`, `/sandboxes/:id` | Tenant lifecycle |
+| `/history/*`, `/images/*` | History and image tooling |
 | `/admin/sandboxes` | Admin global list |
-| `/snapshots`, `/pools`, `/diagnostics` | Admin / ops |
-| `/platform/*` | Health, version, K8s (when RBAC enabled) |
+| `/snapshots`, `/pools`, `/diagnostics` | Phase 2 ops |
+| `/platform/*` | Health, version, K8s, settings |
 
 Full matrix: [../docs/05-feature-matrix.md](../docs/05-feature-matrix.md).

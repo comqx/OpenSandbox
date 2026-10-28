@@ -51,16 +51,12 @@ async def probe_node_agent(settings: Settings) -> dict[str, Any]:
             namespace=settings.bff_k8s_node_agent_namespace,
             label_selector=settings.bff_k8s_node_agent_label_selector,
         )
-        out: list[dict[str, str | None]] = []
+        out: list[dict[str, str]] = []
         for pod in pods.items:
-            ip = pod.status.pod_ip if pod.status else None
-            out.append(
-                {
-                    "name": pod.metadata.name,
-                    "node": pod.spec.node_name or "",
-                    "ip": ip,
-                }
-            )
+            ip = pod.status.pod_ip
+            if not ip:
+                continue
+            out.append({"name": pod.metadata.name, "node": pod.spec.node_name or "", "ip": ip})
         return out
 
     try:
@@ -78,17 +74,12 @@ async def probe_node_agent(settings: Settings) -> dict[str, Any]:
             "totalPods": 0,
         }
 
-    async def _probe_one(pod_ref: dict[str, str | None]) -> dict[str, Any]:
-        ip = pod_ref.get("ip")
-        if not ip:
-            return {"ready": False, "reasons": ["no-pod-ip"]}
-        return await _probe_pod_readyz(
-            ip,
-            settings.bff_k8s_node_agent_probe_port,
-            settings.bff_http_timeout_seconds,
-        )
-
-    probes = await asyncio.gather(*[_probe_one(p) for p in pod_refs])
+    probes = await asyncio.gather(
+        *[
+            _probe_pod_readyz(p["ip"], settings.bff_k8s_node_agent_probe_port, settings.bff_http_timeout_seconds)
+            for p in pod_refs
+        ],
+    )
     ready_count = sum(1 for p in probes if p.get("ready"))
     sample_reasons: list[str] = []
     for p in probes:

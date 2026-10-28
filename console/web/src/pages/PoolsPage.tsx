@@ -18,7 +18,7 @@ import { useEffect, useState } from 'react';
 
 import { SandboxStateTag } from '../components/SemanticTags';
 import { ApiError, poolApi } from '../api/client';
-import type { PoolItem, PoolUpsertRequest } from '../api/types';
+import type { PoolItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 
 export function PoolsPage() {
@@ -75,25 +75,21 @@ export function PoolsPage() {
   };
 
   const onSubmit = async () => {
-    let parsed: unknown;
+    let body: Record<string, unknown>;
     try {
-      parsed = JSON.parse(jsonBody);
+      body = JSON.parse(jsonBody) as Record<string, unknown>;
     } catch {
       message.error('JSON 格式无效');
       return;
     }
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      message.error('JSON 须为对象');
-      return;
-    }
-    const body = parsed as PoolUpsertRequest;
-    if (!editing && (typeof body.name !== 'string' || !body.name)) {
+    const name = String(body.name ?? editing?.name ?? '');
+    if (!name) {
       message.error('body 需包含 name');
       return;
     }
     try {
       if (editing) {
-        await poolApi.update(editing.name, body);
+        await poolApi.update(name, body);
         message.success('已更新');
       } else {
         await poolApi.create(body);

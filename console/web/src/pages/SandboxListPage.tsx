@@ -13,49 +13,40 @@
 // limitations under the License.
 
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Select, Space, Table, Typography, message } from 'antd';
+import { Button, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { sandboxApi } from '../api/client';
 import type { Sandbox } from '../api/types';
+import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import { SandboxStateTag } from '../components/SemanticTags';
 import { formatDateTime, formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
+import { sandboxShellPath } from '../utils/shellPath';
 
 export function SandboxListPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [stateFilter, setStateFilter] = useState<string | undefined>();
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [total, setTotal] = useState(0);
   const [items, setItems] = useState<Sandbox[]>([]);
-  const requestSeq = useRef(0);
 
-  const load = useCallback(async () => {
-    const seq = ++requestSeq.current;
+  const load = async () => {
     setLoading(true);
     try {
       const data = await sandboxApi.list({
-        page,
-        pageSize,
+        pageSize: 50,
         state: stateFilter,
       });
-      if (seq !== requestSeq.current) return;
       setItems(data.items ?? []);
-      setTotal(data.pagination?.totalItems ?? data.items?.length ?? 0);
-    } catch (e) {
-      if (seq !== requestSeq.current) return;
-      message.error(e instanceof Error ? e.message : '加载失败');
     } finally {
-      if (seq === requestSeq.current) setLoading(false);
+      setLoading(false);
     }
-  }, [page, pageSize, stateFilter]);
+  };
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [stateFilter]);
 
   const columns: ColumnsType<Sandbox> = [
     {
@@ -64,6 +55,7 @@ export function SandboxListPage() {
         <Link to={`/sandboxes/${r.id}`}>{sandboxDisplayName(r)}</Link>
       ),
     },
+    sandboxLabelsColumn<Sandbox>(),
     {
       title: '状态',
       dataIndex: ['status', 'state'],
@@ -96,6 +88,11 @@ export function SandboxListPage() {
       render: (_, r) => (
         <Space>
           <Link to={`/sandboxes/${r.id}?tab=logs`}>日志</Link>
+          {r.status?.state === 'Running' ? (
+            <Link to={sandboxShellPath(r.id)}>Shell</Link>
+          ) : (
+            <Typography.Text type="secondary">Shell</Typography.Text>
+          )}
         </Space>
       ),
     },
@@ -113,10 +110,7 @@ export function SandboxListPage() {
             placeholder="按状态筛选"
             style={{ width: 180 }}
             value={stateFilter}
-            onChange={(value) => {
-              setStateFilter(value);
-              setPage(1);
-            }}
+            onChange={setStateFilter}
             options={SANDBOX_STATES.map((s) => ({ label: s, value: s }))}
           />
           <Button onClick={() => void load()}>刷新</Button>
@@ -130,16 +124,8 @@ export function SandboxListPage() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          onChange: (nextPage, nextSize) => {
-            setPage(nextPage);
-            setPageSize(nextSize);
-          },
-        }}
+        pagination={false}
+        scroll={{ x: 'max-content' }}
       />
     </div>
   );

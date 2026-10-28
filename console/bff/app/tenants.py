@@ -14,11 +14,8 @@
 
 from __future__ import annotations
 
-import hmac
 from dataclasses import dataclass
 from pathlib import Path
-
-from fastapi import HTTPException, status
 
 try:
     import tomllib
@@ -31,7 +28,6 @@ class TenantRecord:
     name: str
     namespace: str
     api_key: str
-    api_keys: tuple[str, ...] = ()
 
 
 def _load_toml(path: Path) -> dict:
@@ -61,45 +57,13 @@ def _read_tenants_file(path: Path) -> list[TenantRecord]:
                 raise ValueError(f"Duplicate api_key: {name!r} vs {seen_keys[key]!r}")
             seen_keys[key] = name
         records.append(
-            TenantRecord(
-                name=name,
-                namespace=namespace,
-                api_key=api_keys[0],
-                api_keys=tuple(api_keys),
-            ),
+            TenantRecord(name=name, namespace=namespace, api_key=api_keys[0]),
         )
     return records
 
 
-_cache: dict[str, tuple[int, int, list[TenantRecord]]] = {}
-
-
 def load_tenants(path: str | Path) -> list[TenantRecord]:
-    file_path = Path(path)
-    try:
-        stat = file_path.stat()
-    except OSError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "TENANTS_UNAVAILABLE", "message": "Tenant configuration is not readable"},
-        ) from exc
-    key = str(file_path)
-    cached = _cache.get(key)
-    if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
-        return cached[2]
-    try:
-        records = _read_tenants_file(file_path)
-    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "TENANTS_UNAVAILABLE", "message": "Tenant configuration is invalid"},
-        ) from exc
-    _cache[key] = (stat.st_mtime_ns, stat.st_size, records)
-    return records
-
-
-def clear_tenant_cache() -> None:
-    _cache.clear()
+    return _read_tenants_file(Path(path))
 
 
 def get_tenant_by_name(path: str | Path, name: str) -> TenantRecord | None:
@@ -110,9 +74,11 @@ def get_tenant_by_name(path: str | Path, name: str) -> TenantRecord | None:
 
 
 def lookup_by_api_key(path: str | Path, api_key: str) -> TenantRecord | None:
-    for record in load_tenants(path):
-        keys = record.api_keys or (record.api_key,)
-        for key in keys:
-            if hmac.compare_digest(key.encode("utf-8"), api_key.encode("utf-8")):
-                return record
+    data = _load_toml(Path(path))
+    for raw in data.get("tenants", []):
+        name = raw["name"]
+        namespace = raw["namespace"]
+        for key in raw.get("api_keys", []):
+            if key == api_key:
+                return TenantRecord(name=name, namespace=namespace, api_key=key)
     return None

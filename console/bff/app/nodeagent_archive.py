@@ -18,7 +18,10 @@ import json
 import re
 from typing import Any
 
+import asyncio
+
 from fastapi import HTTPException, status
+from fastapi.responses import Response
 
 from app.config import Settings
 
@@ -35,34 +38,34 @@ def _oss_configured(settings: Settings) -> bool:
     )
 
 
-def _read_archive_sync(
-    settings: Settings,
-    namespace: str,
-    sandbox_id: str,
-    *,
-    max_bytes: int,
-) -> dict[str, Any]:
-    import oss2
-
+def _archive_prefix(settings: Settings, namespace: str, sandbox_id: str) -> str:
     prefix_parts = [
         settings.bff_nodeagent_oss_key_prefix.strip("/"),
         settings.bff_nodeagent_cluster_id,
         namespace,
         sandbox_id,
     ]
-    prefix = "/".join(p for p in prefix_parts if p) + "/"
+    return "/".join(p for p in prefix_parts if p) + "/"
 
+
+def _resolve_latest_archive_log(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+) -> tuple[Any, str, str, str | None, list[str]]:
+    import oss2
+
+    prefix = _archive_prefix(settings, namespace, sandbox_id)
     auth = oss2.Auth(settings.bff_nodeagent_oss_access_key_id, settings.bff_nodeagent_oss_access_key_secret)
     bucket = oss2.Bucket(auth, settings.bff_nodeagent_oss_endpoint, settings.bff_nodeagent_oss_bucket)
 
-    log_objects: list[tuple[str, Any, int]] = []
+    log_objects: list[tuple[str, Any]] = []
     marker_objects: list[tuple[str, int, Any]] = []
 
     for obj in oss2.ObjectIterator(bucket, prefix=prefix):
         key = obj.key
         if _LOG_OBJECT_RE.search(key):
-            size = int(getattr(obj, "size", 0) or 0)
-            log_objects.append((key, obj.last_modified, size))
+            log_objects.append((key, obj.last_modified))
         marker_match = _MARKER_RE.search(key)
         if marker_match:
             marker_objects.append((key, int(marker_match.group(1)), obj.last_modified))
@@ -77,7 +80,7 @@ def _read_archive_sync(
         )
 
     log_objects.sort(key=lambda x: x[1], reverse=True)
-    chosen_key, _, object_size = log_objects[0]
+    chosen_key = log_objects[0][0]
 
     marker_status: str | None = None
     marker_warnings: list[str] = []
@@ -90,33 +93,35 @@ def _read_archive_sync(
             marker_status = str(marker_doc.get("status") or "")
             if marker_doc.get("warnings"):
                 marker_warnings = [str(w) for w in marker_doc["warnings"]]
-        except oss2.exceptions.NoSuchKey:
-            marker_status = "unknown"
         except Exception:
             marker_status = "unknown"
 
-    effective_max = max(1, max_bytes)
-    truncated = False
-    try:
-        if object_size and object_size > effective_max:
-            start = object_size - effective_max
-            data = bucket.get_object(chosen_key, byte_range=(start, object_size - 1)).read()
-            truncated = True
-        else:
-            data = bucket.get_object(chosen_key).read()
-            if len(data) > effective_max:
-                data = data[-effective_max:]
-                truncated = True
-    except oss2.exceptions.NoSuchKey as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "ARCHIVE_NOT_FOUND",
-                "message": f"Log object {chosen_key!r} no longer exists",
-            },
-        ) from exc
+    return bucket, chosen_key, prefix, marker_status, marker_warnings
 
-    content = data.decode("utf-8", errors="replace")
+
+def _read_archive_sync(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+    *,
+    max_bytes: int,
+) -> dict[str, Any]:
+    bucket, chosen_key, prefix, marker_status, marker_warnings = _resolve_latest_archive_log(
+        settings, namespace, sandbox_id
+    )
+
+    obj = bucket.get_object(chosen_key)
+    data = obj.read()
+    object_size_bytes = len(data)
+    truncated = False
+    if len(data) > max_bytes:
+        data = data[-max_bytes:]
+        truncated = True
+
+    try:
+        content = data.decode("utf-8", errors="replace")
+    except Exception:
+        content = data.decode("latin-1", errors="replace")
 
     warnings: list[str] = [
         "Source: node-agent durable store (OSS). Live tail still uses Lifecycle diagnostics.",
@@ -138,17 +143,21 @@ def _read_archive_sync(
             "objectKey": chosen_key,
             "prefix": prefix,
             "markerStatus": marker_status,
+            "objectSizeBytes": object_size_bytes,
         },
     }
 
 
-async def fetch_archive_logs(
+def _read_archive_bytes_sync(
     settings: Settings,
     namespace: str,
     sandbox_id: str,
-    *,
-    max_bytes: int | None = None,
-) -> dict[str, Any]:
+) -> tuple[bytes, str]:
+    bucket, chosen_key, _, _, _ = _resolve_latest_archive_log(settings, namespace, sandbox_id)
+    return bucket.get_object(chosen_key).read(), chosen_key
+
+
+def _require_archive_settings(settings: Settings) -> None:
     if not settings.bff_nodeagent_archive_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -166,12 +175,17 @@ async def fetch_archive_logs(
             },
         )
 
-    cap = max(1, settings.bff_nodeagent_archive_max_bytes)
-    if max_bytes is None:
-        limit = cap
-    else:
-        limit = max(1, min(max_bytes, cap))
-    import asyncio
+
+async def fetch_archive_logs(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+    *,
+    max_bytes: int | None = None,
+) -> dict[str, Any]:
+    _require_archive_settings(settings)
+
+    limit = max_bytes if max_bytes is not None else settings.bff_nodeagent_archive_max_bytes
 
     return await asyncio.to_thread(
         _read_archive_sync,
@@ -179,4 +193,25 @@ async def fetch_archive_logs(
         namespace,
         sandbox_id,
         max_bytes=limit,
+    )
+
+
+async def fetch_archive_logs_download(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+) -> Response:
+    _require_archive_settings(settings)
+
+    data, object_key = await asyncio.to_thread(
+        _read_archive_bytes_sync,
+        settings,
+        namespace,
+        sandbox_id,
+    )
+    filename = object_key.rsplit("/", 1)[-1] or f"{sandbox_id}.log"
+    return Response(
+        content=data,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

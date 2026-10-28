@@ -28,3 +28,25 @@ limitations under the License.
   vertical-align: middle;
   margin-inline-end: 0;
 }
+
+.console-label-tag {
+  border-radius: 999px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.console-label-tag-key {
+  font-weight: 600;
+}
+
+.console-label-tag-eq {
+  opacity: 0.55;
+  margin-inline: 1px;
+}
+
+.console-label-more {
+  cursor: pointer;
+  border-radius: 999px;
+  margin-inline-end: 0;
+  background: #f5f5f5;
+}

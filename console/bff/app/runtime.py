@@ -34,12 +34,37 @@ def _parse_dt(value: str | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+def _status_for_display(
+    status: dict[str, Any],
+    expires_at: str | None,
+    expires: datetime | None,
+    now: datetime,
+) -> dict[str, Any]:
+    """Show an expired Running sandbox as Terminated on this response only.
+
+    The BFF does not store sandbox state. Lifecycle remains the source of truth;
+    this copy is what the console renders for the current request.
+    """
+    if status.get("state") != "Running" or expires is None or expires > now:
+        return status
+    shown = dict(status)
+    shown["state"] = "Terminated"
+    shown["reason"] = "SANDBOX_EXPIRED"
+    shown["message"] = "Sandbox expired"
+    if expires_at:
+        shown["lastTransitionAt"] = expires_at
+    return shown
+
+
 def attach_runtime_summary(sandbox: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Return a shallow copy of sandbox with runtimeSummary added."""
     now = now or datetime.now(timezone.utc)
     created = _parse_dt(sandbox.get("createdAt"))
-    expires = _parse_dt(sandbox.get("expiresAt"))
-    status = sandbox.get("status") or {}
+    expires_at = sandbox.get("expiresAt")
+    expires_at = expires_at if isinstance(expires_at, str) else None
+    expires = _parse_dt(expires_at)
+    raw_status = sandbox.get("status") if isinstance(sandbox.get("status"), dict) else {}
+    status = _status_for_display(raw_status, expires_at, expires, now)
     state = status.get("state")
     last_transition = _parse_dt(status.get("lastTransitionAt"))
 
@@ -49,48 +74,34 @@ def attach_runtime_summary(sandbox: dict[str, Any], now: datetime | None = None)
         if state in _TERMINAL_STATES and last_transition:
             end = last_transition
             summary["basis"] = "lastTransitionAt"
+        # TTL is the billing ceiling. A sandbox whose API state is still Running
+        # after expireTime has passed must not keep accumulating wall-clock time.
+        if expires and expires < end:
+            end = expires
+            summary["basis"] = "expiresAt"
         summary["wallClockSeconds"] = max(0, int((end - created).total_seconds()))
     if expires:
         summary["remainingSeconds"] = max(0, int((expires - now).total_seconds()))
 
     out = dict(sandbox)
+    if status is not raw_status:
+        out["status"] = status
     out["runtimeSummary"] = summary
     return out
 
 
-def aggregate_runtime_stats(
-    sandboxes: list[dict[str, Any]],
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Summarize already-attached runtime rows with one timestamp.
-
-    Missing wall clocks are skipped. Terminal sandboxes are not treated as
-    about to expire just because their remaining time is small.
-    """
-    if now is None:
-        stamped: datetime | None = None
-        for sandbox in sandboxes:
-            raw = (sandbox.get("runtimeSummary") or {}).get("asOf")
-            if isinstance(raw, str):
-                stamped = _parse_dt(raw)
-                if stamped is not None:
-                    break
-        now = stamped or datetime.now(timezone.utc)
-
+def aggregate_runtime_stats(sandboxes: list[dict[str, Any]]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
     running = [s for s in sandboxes if (s.get("status") or {}).get("state") == "Running"]
-    walls: list[int] = []
+    walls = [s.get("runtimeSummary", {}).get("wallClockSeconds", 0) for s in sandboxes]
+    walls = [w for w in walls if isinstance(w, int)]
     expiring = 0
-    for sandbox in sandboxes:
-        summary = sandbox.get("runtimeSummary") or {}
-        wall = summary.get("wallClockSeconds")
-        if isinstance(wall, int):
-            walls.append(wall)
-        state = (sandbox.get("status") or {}).get("state")
-        remaining = summary.get("remainingSeconds")
-        if state not in _TERMINAL_STATES and isinstance(remaining, int) and remaining <= 30 * 60:
+    for s in sandboxes:
+        rem = (s.get("runtimeSummary") or {}).get("remainingSeconds")
+        if isinstance(rem, int) and rem <= 30 * 60:
             expiring += 1
 
-    total = sum(walls)
+    total = sum(walls) if walls else 0
     return {
         "runningCount": len(running),
         "totalWallClockSeconds": total,

@@ -1,0 +1,543 @@
+# Copyright 2026 The OpenSandbox Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+
+from app.config import get_settings
+from app.deps import get_session_payload, require_admin_session, require_tenant_session
+from app.history import reconcile, store
+from app.history.recommendation_jobs import execute_recommendation_run
+from app.resource_recommendation import RecommendationError, compute_resource_recommendations, window_to_period
+
+router = APIRouter(prefix="/history", tags=["history"])
+
+
+def _history_disabled() -> None:
+    if not get_settings().bff_history_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "HISTORY_DISABLED",
+                "message": "Set BFF_HISTORY_ENABLED and BFF_HISTORY_DATABASE_URL",
+            },
+        )
+
+
+@router.get("/sandboxes")
+async def list_sandbox_history(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    page = max(1, int(request.query_params.get("page", 1) or 1))
+    page_size = min(200, max(1, int(request.query_params.get("pageSize", 20) or 20)))
+    include_active = request.query_params.get("includeActive", "true").lower() != "false"
+    settings = get_settings()
+
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    period_from: datetime | None = None
+    period_to: datetime | None = None
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    if raw_from and raw_to:
+        period_from = _parse_period_param(raw_from, "from")
+        period_to = _parse_period_param(raw_to, "to")
+        if period_to <= period_from:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_PERIOD", "message": "to must be after from"},
+            )
+
+    label = (request.query_params.get("label") or "").strip()
+    if len(label) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
+        )
+    sandbox_id = (request.query_params.get("sandboxId") or "").strip()
+    if len(sandbox_id) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_SANDBOX_ID", "message": "sandboxId query is longer than 200 characters"},
+        )
+
+    return await asyncio.to_thread(
+        store.list_history,
+        settings,
+        tenant_name=tenant_filter,
+        page=page,
+        page_size=page_size,
+        include_active=include_active,
+        period_from=period_from,
+        period_to=period_to,
+        label=label or None,
+        sandbox_id=sandbox_id or None,
+    )
+
+
+@router.get("/sandboxes/{sandbox_id}")
+async def get_sandbox_history_record(
+    sandbox_id: str,
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+        if not tenant_filter or not tenant_filter.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "MISSING_TENANT", "message": "Admin must pass query parameter tenant="},
+            )
+        tenant_filter = tenant_filter.strip()
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    record = await asyncio.to_thread(
+        store.get_history_record,
+        settings,
+        sandbox_id=sandbox_id,
+        tenant_name=tenant_filter,
+    )
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "HISTORY_NOT_FOUND", "message": "No history record for this sandbox"},
+        )
+    return record
+
+
+@router.get("/stats")
+async def history_statistics(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    period_from: datetime | None = None
+    period_to: datetime | None = None
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    if (raw_from and raw_from.strip()) or (raw_to and raw_to.strip()):
+        period_from = _parse_period_param(raw_from, "from")
+        period_to = _parse_period_param(raw_to, "to")
+        if period_from >= period_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+            )
+
+    return await asyncio.to_thread(
+        store.history_stats,
+        settings,
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+    )
+
+
+@router.get("/created-series")
+async def created_series(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    period_from = _parse_period_param(request.query_params.get("from"), "from")
+    period_to = _parse_period_param(request.query_params.get("to"), "to")
+    if period_from >= period_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+        )
+    bucket = (request.query_params.get("bucket") or "day").strip().lower()
+    try:
+        bucket = store._validate_created_bucket(bucket, period_from, period_to)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_BUCKET", "message": str(exc)},
+        ) from exc
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    return await asyncio.to_thread(
+        store.created_series,
+        settings,
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+        bucket=bucket,
+    )
+
+
+@router.get("/images/stats")
+async def image_statistics(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant_filter = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        tenant_filter = str(payload.get("tenant"))
+
+    period_from: datetime | None = None
+    period_to: datetime | None = None
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    if raw_from and raw_from.strip():
+        period_from = _parse_period_param(raw_from, "from")
+    if raw_to and raw_to.strip():
+        period_to = _parse_period_param(raw_to, "to")
+    if period_from and period_to and period_from >= period_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+        )
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    return await asyncio.to_thread(
+        store.image_stats,
+        settings,
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+    )
+
+
+def _recommendation_actor(payload: dict) -> str:
+    role = payload.get("role")
+    if role == "tenant":
+        return str(payload.get("tenant") or "")
+    return "admin"
+
+
+def _recommendation_tenant_scope(request: Request, payload: dict) -> str | None:
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        tenant = (request.query_params.get("tenant") or "").strip()
+        return tenant or None
+    require_tenant_session(payload)
+    return str(payload.get("tenant"))
+
+
+def _recommendation_period_and_filters(
+    request: Request,
+) -> tuple[datetime, datetime, str | None, str | None, str | None]:
+    raw_from = request.query_params.get("from")
+    raw_to = request.query_params.get("to")
+    window_label: str | None = None
+    if raw_from and raw_to:
+        period_from = _parse_period_param(raw_from, "from")
+        period_to = _parse_period_param(raw_to, "to")
+        if period_from >= period_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_PERIOD", "message": "from must be before to"},
+            )
+    else:
+        window_label = (request.query_params.get("window") or "7d").strip()
+        try:
+            period_from, period_to = window_to_period(window_label)
+        except RecommendationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+
+    label = (request.query_params.get("label") or "").strip()
+    if len(label) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_LABEL", "message": "label query is longer than 200 characters"},
+        )
+    sandbox_id = (request.query_params.get("sandboxId") or "").strip()
+    if len(sandbox_id) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_SANDBOX_ID", "message": "sandboxId query is longer than 200 characters"},
+        )
+    return period_from, period_to, label or None, sandbox_id or None, window_label
+
+
+async def _maybe_reconcile_history(
+    request: Request,
+    settings,
+    payload: dict,
+    tenant_filter: str | None,
+) -> None:
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+
+def _raise_recommendation_error(exc: RecommendationError) -> None:
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    if exc.code in (
+        "INVALID_WINDOW",
+        "SANDBOX_LIMIT_EXCEEDED",
+        "INVALID_PROMQL_LABEL",
+        "PROMETHEUS_URL_INVALID",
+        "INVALID_SETTINGS",
+    ):
+        status_code = status.HTTP_400_BAD_REQUEST
+    elif exc.code in ("INSUFFICIENT_DATA",):
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    elif exc.code == "COMPUTE_TIMEOUT":
+        status_code = status.HTTP_504_GATEWAY_TIMEOUT
+    elif exc.code == "HISTORY_UNAVAILABLE":
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": exc.message},
+    ) from exc
+
+
+def _parse_period_param(value: str | None, name: str) -> datetime:
+    if not value or not value.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PERIOD", "message": f"Missing query parameter: {name}"},
+        )
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PERIOD", "message": f"Invalid {name}: {value}"},
+        ) from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+@router.get("/resource-recommendations")
+async def resource_recommendations(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    period_from, period_to, label, sandbox_id, _window_label = _recommendation_period_and_filters(request)
+    await _maybe_reconcile_history(request, settings, payload, tenant_filter)
+
+    try:
+        return await asyncio.to_thread(
+            compute_resource_recommendations,
+            settings,
+            tenant_name=tenant_filter,
+            period_from=period_from,
+            period_to=period_to,
+            label=label,
+            sandbox_id=sandbox_id,
+        )
+    except RecommendationError as exc:
+        _raise_recommendation_error(exc)
+
+
+@router.post("/resource-recommendation-runs", status_code=status.HTTP_202_ACCEPTED)
+async def create_resource_recommendation_run(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    period_from, period_to, label, sandbox_id, window_label = _recommendation_period_and_filters(request)
+    reconcile_tenants = None
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        reconcile_tenants = reconcile.tenants_for_reconcile(settings, payload, tenant_filter)
+
+    role = str(payload.get("role") or "tenant")
+    try:
+        created = await asyncio.to_thread(
+            store.insert_pending_recommendation_run,
+            settings,
+            tenant_name=tenant_filter,
+            created_by_role=role,
+            created_by_actor=_recommendation_actor(payload),
+            label=label,
+            sandbox_id_filter=sandbox_id,
+            period_from=period_from,
+            period_to=period_to,
+            window_label=window_label,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "HISTORY_UNAVAILABLE", "message": str(exc)},
+        ) from exc
+
+    background_tasks.add_task(
+        execute_recommendation_run,
+        run_id=created["id"],
+        tenant_name=tenant_filter,
+        period_from=period_from,
+        period_to=period_to,
+        label=label,
+        sandbox_id=sandbox_id,
+        reconcile_tenants=reconcile_tenants,
+    )
+    return created
+
+
+@router.get("/resource-recommendation-runs")
+async def list_resource_recommendation_runs(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    page = max(1, int(request.query_params.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.query_params.get("pageSize", 20) or 20)))
+    return await asyncio.to_thread(
+        store.list_recommendation_runs,
+        settings,
+        tenant_name=tenant_filter,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/resource-recommendation-runs/{run_id}")
+async def get_resource_recommendation_run(
+    run_id: str,
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    tenant_filter = _recommendation_tenant_scope(request, payload)
+    item = await asyncio.to_thread(
+        store.get_recommendation_run,
+        settings,
+        run_id=run_id,
+        tenant_name=tenant_filter,
+    )
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": "Recommendation run not found"},
+        )
+    return item
+
+
+@router.get("/usage")
+async def usage_allocation(
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+) -> dict[str, Any]:
+    _history_disabled()
+    settings = get_settings()
+    period_from = _parse_period_param(request.query_params.get("from"), "from")
+    period_to = _parse_period_param(request.query_params.get("to"), "to")
+
+    viewer_tenant_only: str | None = None
+    display_tenant: str | None = None
+    if payload.get("role") == "admin":
+        require_admin_session(payload)
+        display_tenant = request.query_params.get("tenant")
+    else:
+        require_tenant_session(payload)
+        viewer_tenant_only = str(payload.get("tenant"))
+
+    if (
+        request.query_params.get("reconcile", "true").lower() != "false"
+        and settings.bff_history_reconcile_on_read
+    ):
+        tenants = reconcile.tenants_for_reconcile(settings, payload, display_tenant or viewer_tenant_only)
+        await reconcile.sync_with_lifecycle(settings, tenants=tenants)
+
+    try:
+        return await asyncio.to_thread(
+            store.usage_allocation,
+            settings,
+            period_from=period_from,
+            period_to=period_to,
+            display_tenant=display_tenant,
+            viewer_tenant_only=viewer_tenant_only,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PERIOD", "message": str(exc)},
+        ) from exc

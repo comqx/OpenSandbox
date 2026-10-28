@@ -12,58 +12,55 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Alert, Select, Space, Table, Typography, message } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
+import { Alert, Input, Select, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { adminApi } from '../api/client';
 import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../components/AdminTenantSelect';
+import { sandboxLabelsColumn } from '../components/SandboxLabelTags';
 import type { Sandbox } from '../api/types';
 import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
-
-/** Lifecycle maximum page size. A full page can hide later sandboxes for that tenant. */
-const ADMIN_LIST_PAGE_SIZE = 200;
+import { sandboxShellPath } from '../utils/shellPath';
 
 export function AdminSandboxesPage() {
   const [loading, setLoading] = useState(false);
+  const [idQuery, setIdQuery] = useState('');
   const [stateFilter, setStateFilter] = useState<string | undefined>();
-  const [tenantFilter, setTenantFilter] = useState(ALL_TENANTS);
+  const [searchParams] = useSearchParams();
+  const [tenantFilter, setTenantFilter] = useState(() => searchParams.get('tenant') || ALL_TENANTS);
   const [items, setItems] = useState<Sandbox[]>([]);
   const [tenantErrors, setTenantErrors] = useState<
     { tenant: string; code: string; message: string }[]
   >([]);
-  const [capped, setCapped] = useState(false);
-  const requestSeq = useRef(0);
 
-  const load = useCallback(async () => {
-    const seq = ++requestSeq.current;
+  const load = async () => {
     setLoading(true);
     try {
       const data = await adminApi.sandboxes({
-        pageSize: ADMIN_LIST_PAGE_SIZE,
+        pageSize: 200,
         state: stateFilter,
         tenant: tenantFilterToQuery(tenantFilter),
       });
-      if (seq !== requestSeq.current) return;
       setItems(data.items ?? []);
       setTenantErrors(data.pagination?.tenantErrors ?? []);
-      setCapped(Boolean(data.pagination?.capped));
-    } catch (error) {
-      if (seq !== requestSeq.current) return;
-      setItems([]);
-      setTenantErrors([]);
-      setCapped(false);
-      message.error(error instanceof Error ? error.message : '加载沙箱失败');
     } finally {
-      if (seq === requestSeq.current) setLoading(false);
+      setLoading(false);
     }
-  }, [stateFilter, tenantFilter]);
+  };
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [stateFilter, tenantFilter]);
+
+  const visibleItems = useMemo(() => {
+    const needle = idQuery.trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((item) => item.id.toLowerCase().includes(needle));
+  }, [idQuery, items]);
 
   const columns: ColumnsType<Sandbox> = [
     {
@@ -86,6 +83,7 @@ export function AdminSandboxesPage() {
       title: 'Namespace',
       dataIndex: 'namespace',
     },
+    sandboxLabelsColumn<Sandbox>(),
     {
       title: '状态',
       width: 124,
@@ -106,16 +104,24 @@ export function AdminSandboxesPage() {
     },
     {
       title: '操作',
+      key: 'actions',
+      width: 220,
+      fixed: 'right',
       render: (_, r) => (
         <Space>
           <Link to={`/sandboxes/${r.id}?tenant=${encodeURIComponent(r.tenant ?? '')}&tab=logs`}>
-            日志
+            监控日志
           </Link>
           <Link
             to={`/diagnostics?sandboxId=${encodeURIComponent(r.id)}&tenant=${encodeURIComponent(r.tenant ?? '')}`}
           >
             诊断
           </Link>
+          {r.status?.state === 'Running' ? (
+            <Link to={sandboxShellPath(r.id, r.tenant)}>Shell</Link>
+          ) : (
+            <Typography.Text type="secondary">Shell</Typography.Text>
+          )}
         </Space>
       ),
     },
@@ -125,16 +131,8 @@ export function AdminSandboxesPage() {
     <div>
       <Typography.Title level={4}>沙箱（全局）</Typography.Title>
       <Typography.Paragraph type="secondary">
-        来自 Lifecycle 的当前沙箱列表，不是持久化申请记录。Admin 默认全部租户，可筛选单租户。
+        来自 Lifecycle 的当前沙箱列表。持久化申请记录见侧栏「沙箱 → 申请历史」。Admin 默认全部租户，可筛选单租户。
       </Typography.Paragraph>
-      {capped && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message={`每个租户最多显示 ${ADMIN_LIST_PAGE_SIZE} 条，超出的沙箱未列出。`}
-        />
-      )}
       {tenantErrors.length > 0 && (
         <Alert
           type="warning"
@@ -153,6 +151,14 @@ export function AdminSandboxesPage() {
         />
       )}
       <Space style={{ marginBottom: 16 }}>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="搜索沙箱 ID"
+          value={idQuery}
+          onChange={(e) => setIdQuery(e.target.value)}
+          style={{ width: 240 }}
+        />
         <AdminTenantSelect value={tenantFilter} onChange={setTenantFilter} />
         <Select
           allowClear
@@ -163,7 +169,14 @@ export function AdminSandboxesPage() {
           options={SANDBOX_STATES.map((s) => ({ label: s, value: s }))}
         />
       </Space>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={false} />
+      <Table
+        rowKey="id"
+        loading={loading}
+        columns={columns}
+        dataSource={visibleItems}
+        pagination={false}
+        scroll={{ x: 'max-content' }}
+      />
     </div>
   );
 }

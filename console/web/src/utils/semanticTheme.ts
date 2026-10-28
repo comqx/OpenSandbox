@@ -40,6 +40,27 @@ const TENANT_TAG_COLORS = [
 
 export type TenantTagColor = (typeof TENANT_TAG_COLORS)[number];
 
+const LABEL_TAG_COLORS = [
+  'magenta',
+  'red',
+  'volcano',
+  'orange',
+  'gold',
+  'lime',
+  'green',
+  'cyan',
+  'blue',
+  'geekblue',
+  'purple',
+] as const;
+
+/** 同一个标签键始终落到同一种颜色。 */
+export function labelTagColor(key: string): (typeof LABEL_TAG_COLORS)[number] {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 33 + key.charCodeAt(i)) >>> 0;
+  return LABEL_TAG_COLORS[h % LABEL_TAG_COLORS.length];
+}
+
 /** 租户名稳定映射到 Tag 色，全站表格一致。 */
 export function tenantTagColor(tenant: string): TenantTagColor {
   let h = 0;
@@ -80,20 +101,11 @@ export function sandboxStateTagColor(state?: string | null): string | undefined 
 /** 日志 level（含 zap 的 warn / Python 单字母 I）→ ANSI 前景色转义。 */
 export function logLevelAnsi(level: string): string {
   const u = level.toUpperCase();
-  if (
-    u === 'ERROR' ||
-    u === 'ERR' ||
-    u === 'FATAL' ||
-    u === 'PANIC' ||
-    u === 'CRITICAL' ||
-    u === 'E' ||
-    u === 'C' ||
-    u === 'F'
-  ) {
+  if (u === 'ERROR' || u === 'ERR' || u === 'FATAL' || u === 'PANIC' || u === 'CRITICAL' || u === 'E') {
     return LOG_ANSI.red;
   }
   if (u === 'WARN' || u === 'WARNING' || u === 'W') return LOG_ANSI.yellow;
-  if (u === 'DEBUG' || u === 'TRACE' || u === 'D' || u === 'T') return LOG_ANSI.blue;
+  if (u === 'DEBUG' || u === 'TRACE' || u === 'D') return LOG_ANSI.blue;
   if (u === 'INFO' || u === 'I') return LOG_ANSI.green;
   return LOG_ANSI.reset;
 }
