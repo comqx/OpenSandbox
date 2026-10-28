@@ -62,6 +62,8 @@ def execd_protocol(settings: Settings) -> str:
     configured = settings.bff_execd_protocol.strip().lower()
     if configured in {"http", "https"}:
         return configured
+    if configured:
+        raise ShellError("EXECD_PROTOCOL", "BFF_EXECD_PROTOCOL must be http or https")
     if settings.lifecycle_api_base.startswith("https://"):
         return "https"
     return "http"
@@ -170,17 +172,23 @@ async def bridge_pty(browser: WebSocket, execd_ws) -> None:
                 return
             text = message.get("text")
             data = message.get("bytes")
-            if text is not None:
-                await execd_ws.send(text)
-            elif data is not None:
-                await execd_ws.send(data)
+            try:
+                if text is not None:
+                    await execd_ws.send(text)
+                elif data is not None:
+                    await execd_ws.send(data)
+            except websockets.ConnectionClosed:
+                return
 
     async def execd_to_browser() -> None:
         async for payload in execd_ws:
-            if isinstance(payload, str):
-                await browser.send_text(payload)
-            else:
-                await browser.send_bytes(payload)
+            try:
+                if isinstance(payload, str):
+                    await browser.send_text(payload)
+                else:
+                    await browser.send_bytes(payload)
+            except Exception:
+                return
 
     tasks = {
         asyncio.create_task(browser_to_execd()),

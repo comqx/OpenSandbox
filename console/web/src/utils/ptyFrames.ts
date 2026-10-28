@@ -17,6 +17,9 @@ const PTY_STDOUT = 0x01;
 const PTY_STDERR = 0x02;
 const PTY_REPLAY = 0x03;
 
+/** Replay frames carry an 8-byte sequence header after the kind byte (execd PTY wire format). */
+const PTY_REPLAY_HEADER_BYTES = 8;
+
 export function encodeStdin(text: string): Uint8Array {
   const body = new TextEncoder().encode(text);
   const frame = new Uint8Array(body.length + 1);
@@ -30,6 +33,8 @@ export function decodePtyOutput(frame: Uint8Array): Uint8Array | null {
   if (frame.length === 0) return null;
   const kind = frame[0];
   if (kind === PTY_STDOUT || kind === PTY_STDERR) return frame.subarray(1);
-  if (kind === PTY_REPLAY && frame.length >= 9) return frame.subarray(9);
+  if (kind === PTY_REPLAY && frame.length >= 1 + PTY_REPLAY_HEADER_BYTES) {
+    return frame.subarray(1 + PTY_REPLAY_HEADER_BYTES);
+  }
   return null;
 }

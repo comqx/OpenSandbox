@@ -102,6 +102,18 @@ def test_execd_protocol_override_and_lifecycle_default():
     assert execd_protocol(override) == "https"
 
 
+def test_execd_protocol_rejects_invalid_override():
+    settings = Settings(
+        lifecycle_api_base="http://lifecycle.test/v1",
+        tenants_toml_path="/tmp/tenants.toml",
+        bff_session_secret="x" * 32,
+        bff_admin_token="admin",
+        bff_execd_protocol="htps",
+    )
+    with pytest.raises(ShellError, match="http or https"):
+        execd_protocol(settings)
+
+
 class FakeExecdSocket:
     def __init__(self) -> None:
         self.sent: list[bytes | str] = []

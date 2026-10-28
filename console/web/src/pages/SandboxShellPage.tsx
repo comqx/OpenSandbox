@@ -24,6 +24,13 @@ import { decodePtyOutput, encodeStdin } from '../utils/ptyFrames';
 
 type ShellStatus = 'connecting' | 'open' | 'closed' | 'error';
 
+const SHELL_STATUS_LABELS: Record<ShellStatus, string> = {
+  connecting: '连接中',
+  open: '已连接',
+  error: '失败',
+  closed: '已断开',
+};
+
 function shellWebSocketUrl(id: string, admin: boolean, tenant: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const path = admin
@@ -82,11 +89,7 @@ export function SandboxShellPage() {
 
     ws.onopen = () => {
       if (!alive) return;
-      setStatus('open');
-      setError(null);
       fit.fit();
-      sendResize();
-      term.focus();
     };
 
     ws.onmessage = (event) => {
@@ -97,6 +100,14 @@ export function SandboxShellPage() {
           frame = JSON.parse(event.data) as { type?: string; error?: string; exit_code?: number };
         } catch {
           term.write(event.data);
+          return;
+        }
+        if (frame.type === 'connected') {
+          setStatus('open');
+          setError(null);
+          fit.fit();
+          sendResize();
+          term.focus();
           return;
         }
         if (frame.type === 'error') {
@@ -141,13 +152,18 @@ export function SandboxShellPage() {
             Shell
           </Typography.Title>
           <Typography.Text type="secondary">{id}</Typography.Text>
-          <Typography.Text type="secondary">
-            {status === 'connecting' ? '连接中' : status === 'open' ? '已连接' : status === 'error' ? '失败' : '已断开'}
-          </Typography.Text>
+          <Typography.Text type="secondary">{SHELL_STATUS_LABELS[status]}</Typography.Text>
         </Space>
         <Space>
           <Link to={backTo}>返回沙箱</Link>
-          <Button onClick={() => setAttempt((value) => value + 1)} disabled={missingTenant}>
+          <Button
+            disabled={missingTenant}
+            onClick={() => {
+              setError(null);
+              setStatus('connecting');
+              setAttempt((value) => value + 1);
+            }}
+          >
             重新连接
           </Button>
         </Space>

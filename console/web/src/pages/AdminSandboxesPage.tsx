@@ -22,7 +22,7 @@ import { AdminTenantSelect, ALL_TENANTS, tenantFilterToQuery } from '../componen
 import type { Sandbox } from '../api/types';
 import { consoleTagTableCellProps, SandboxStateTag, TenantTag } from '../components/SemanticTags';
 import { formatDuration, SANDBOX_STATES, sandboxDisplayName } from '../utils/format';
-import { sandboxShellPath } from '../utils/shellPath';
+import { ShellLink } from '../components/ShellLink';
 
 /** Lifecycle maximum page size. A full page can hide later sandboxes for that tenant. */
 const ADMIN_LIST_PAGE_SIZE = 200;
@@ -117,11 +117,7 @@ export function AdminSandboxesPage() {
           >
             诊断
           </Link>
-          {r.status?.state === 'Running' ? (
-            <Link to={sandboxShellPath(r.id, r.tenant)}>Shell</Link>
-          ) : (
-            <Typography.Text type="secondary">Shell</Typography.Text>
-          )}
+          <ShellLink sandboxId={r.id} state={r.status?.state} tenant={r.tenant} />
         </Space>
       ),
     },
