@@ -23,7 +23,7 @@ from app.deps import get_session_payload, require_tenant_session
 from app.lifecycle import LifecycleClient
 from app.runtime import attach_runtime_summary
 from app.routes.proxy_utils import passthrough_json
-from app.nodeagent_archive import fetch_archive_logs
+from app.nodeagent_archive import fetch_archive_logs, fetch_archive_logs_download
 from app.history import tasks as history_tasks
 from app.routes.session_keys import tenant_api_key, tenant_namespace_for_session
 
@@ -176,6 +176,16 @@ async def create_snapshot(
         json_body=body or {},
     )
     return await passthrough_json(resp)
+
+
+@router.get("/{sandbox_id}/logs/archive/download")
+async def download_sandbox_archive_logs(
+    sandbox_id: str,
+    payload: dict = Depends(get_session_payload),
+) -> Any:
+    require_tenant_session(payload)
+    namespace = tenant_namespace_for_session(payload)
+    return await fetch_archive_logs_download(get_settings(), namespace, sandbox_id)
 
 
 @router.get("/{sandbox_id}/logs/archive")

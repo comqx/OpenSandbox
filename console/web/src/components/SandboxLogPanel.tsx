@@ -42,9 +42,11 @@ export function SandboxLogPanel({
   const [data, setData] = useState<DiagnosticContentResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  /** 仅在成功拉取后递增，用于 remount LazyLog；勿把 loading 写入 key，否则会 remount 两次并滚到顶部 */
+  const [viewerEpoch, setViewerEpoch] = useState(0);
   const timerRef = useRef<number | null>(null);
 
-  const fetchLogs = useCallback(async () => {
+  const fetchLogs = useCallback(async (options?: { pinTail?: boolean }) => {
     if (!sandboxId.trim()) return;
     if (user?.role === 'admin' && !tenant) {
       message.warning('Admin 查看日志需指定 tenant');
@@ -57,6 +59,9 @@ export function SandboxLogPanel({
           ? await adminApi.diagnosticLogs(sandboxId.trim(), tenant, scope)
           : await sandboxApi.diagnosticLogs(sandboxId.trim(), scope);
       setData(result);
+      if (options?.pinTail) {
+        setViewerEpoch((epoch) => epoch + 1);
+      }
     } catch (e) {
       setData(null);
       message.error(e instanceof Error ? e.message : '加载日志失败');
@@ -66,7 +71,7 @@ export function SandboxLogPanel({
   }, [sandboxId, scope, tenant, user?.role]);
 
   useEffect(() => {
-    if (autoLoad && sandboxId) void fetchLogs();
+    if (autoLoad && sandboxId) void fetchLogs({ pinTail: true });
   }, [autoLoad, sandboxId, scope, fetchLogs]);
 
   useEffect(() => {
@@ -99,7 +104,7 @@ export function SandboxLogPanel({
       <SandboxColoredLogViewer
         content={data.content ?? ''}
         maxHeight={maxHeight}
-        contentKey={`${scope}-${data.content?.length ?? 0}-${loading ? 'loading' : 'idle'}`}
+        contentKey={`${scope}-${viewerEpoch}`}
       />
     );
   };
@@ -113,7 +118,7 @@ export function SandboxLogPanel({
           style={{ width: 160 }}
           options={DIAGNOSTIC_SCOPES.map((s) => ({ label: s, value: s }))}
         />
-        <Button type="primary" loading={loading} onClick={() => void fetchLogs()}>
+        <Button type="primary" loading={loading} onClick={() => void fetchLogs({ pinTail: true })}>
           刷新
         </Button>
         <Space>

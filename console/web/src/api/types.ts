@@ -262,6 +262,7 @@ export interface DiagnosticContentResponse {
     objectKey?: string;
     prefix?: string;
     markerStatus?: string | null;
+    objectSizeBytes?: number;
   };
 }
 

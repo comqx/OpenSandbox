@@ -18,7 +18,10 @@ import json
 import re
 from typing import Any
 
+import asyncio
+
 from fastapi import HTTPException, status
+from fastapi.responses import Response
 
 from app.config import Settings
 
@@ -35,23 +38,24 @@ def _oss_configured(settings: Settings) -> bool:
     )
 
 
-def _read_archive_sync(
-    settings: Settings,
-    namespace: str,
-    sandbox_id: str,
-    *,
-    max_bytes: int,
-) -> dict[str, Any]:
-    import oss2
-
+def _archive_prefix(settings: Settings, namespace: str, sandbox_id: str) -> str:
     prefix_parts = [
         settings.bff_nodeagent_oss_key_prefix.strip("/"),
         settings.bff_nodeagent_cluster_id,
         namespace,
         sandbox_id,
     ]
-    prefix = "/".join(p for p in prefix_parts if p) + "/"
+    return "/".join(p for p in prefix_parts if p) + "/"
 
+
+def _resolve_latest_archive_log(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+) -> tuple[Any, str, str, str | None, list[str]]:
+    import oss2
+
+    prefix = _archive_prefix(settings, namespace, sandbox_id)
     auth = oss2.Auth(settings.bff_nodeagent_oss_access_key_id, settings.bff_nodeagent_oss_access_key_secret)
     bucket = oss2.Bucket(auth, settings.bff_nodeagent_oss_endpoint, settings.bff_nodeagent_oss_bucket)
 
@@ -92,8 +96,23 @@ def _read_archive_sync(
         except Exception:
             marker_status = "unknown"
 
+    return bucket, chosen_key, prefix, marker_status, marker_warnings
+
+
+def _read_archive_sync(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+    *,
+    max_bytes: int,
+) -> dict[str, Any]:
+    bucket, chosen_key, prefix, marker_status, marker_warnings = _resolve_latest_archive_log(
+        settings, namespace, sandbox_id
+    )
+
     obj = bucket.get_object(chosen_key)
     data = obj.read()
+    object_size_bytes = len(data)
     truncated = False
     if len(data) > max_bytes:
         data = data[-max_bytes:]
@@ -124,17 +143,21 @@ def _read_archive_sync(
             "objectKey": chosen_key,
             "prefix": prefix,
             "markerStatus": marker_status,
+            "objectSizeBytes": object_size_bytes,
         },
     }
 
 
-async def fetch_archive_logs(
+def _read_archive_bytes_sync(
     settings: Settings,
     namespace: str,
     sandbox_id: str,
-    *,
-    max_bytes: int | None = None,
-) -> dict[str, Any]:
+) -> tuple[bytes, str]:
+    bucket, chosen_key, _, _, _ = _resolve_latest_archive_log(settings, namespace, sandbox_id)
+    return bucket.get_object(chosen_key).read(), chosen_key
+
+
+def _require_archive_settings(settings: Settings) -> None:
     if not settings.bff_nodeagent_archive_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -152,8 +175,17 @@ async def fetch_archive_logs(
             },
         )
 
+
+async def fetch_archive_logs(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+    *,
+    max_bytes: int | None = None,
+) -> dict[str, Any]:
+    _require_archive_settings(settings)
+
     limit = max_bytes if max_bytes is not None else settings.bff_nodeagent_archive_max_bytes
-    import asyncio
 
     return await asyncio.to_thread(
         _read_archive_sync,
@@ -161,4 +193,25 @@ async def fetch_archive_logs(
         namespace,
         sandbox_id,
         max_bytes=limit,
+    )
+
+
+async def fetch_archive_logs_download(
+    settings: Settings,
+    namespace: str,
+    sandbox_id: str,
+) -> Response:
+    _require_archive_settings(settings)
+
+    data, object_key = await asyncio.to_thread(
+        _read_archive_bytes_sync,
+        settings,
+        namespace,
+        sandbox_id,
+    )
+    filename = object_key.rsplit("/", 1)[-1] or f"{sandbox_id}.log"
+    return Response(
+        content=data,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

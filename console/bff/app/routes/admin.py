@@ -27,7 +27,7 @@ from app.routes.proxy_utils import passthrough_json
 from app.k8s_platform import probe_platform_deployment
 from app.k8s_probe import probe_node_agent
 from app.k8s_resources import list_events, list_workloads
-from app.nodeagent_archive import fetch_archive_logs
+from app.nodeagent_archive import fetch_archive_logs, fetch_archive_logs_download
 from app.monitor_context import sandbox_monitor_response
 from app.routes.admin_proxy import admin_get_sandbox, admin_lifecycle_request
 from app.routes.session_keys import api_key_for_tenant_name, tenant_namespace_for_name
@@ -409,6 +409,18 @@ async def admin_platform_summary(
             "console": {"status": "ok", "note": "BFF session active"},
         },
     }
+
+
+@router.get("/sandboxes/{sandbox_id}/logs/archive/download")
+async def admin_sandbox_archive_logs_download(
+    sandbox_id: str,
+    request: Request,
+    payload: dict = Depends(get_session_payload),
+):
+    require_admin_session(payload)
+    tenant = _require_tenant_query(request)
+    namespace = tenant_namespace_for_name(tenant)
+    return await fetch_archive_logs_download(get_settings(), namespace, sandbox_id)
 
 
 @router.get("/sandboxes/{sandbox_id}/logs/archive")

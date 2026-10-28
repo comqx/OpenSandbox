@@ -123,6 +123,47 @@ export function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function filenameFromContentDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const quoted = /filename="([^"]+)"/.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const bare = /filename=([^;]+)/.exec(header);
+  return bare?.[1]?.trim() || fallback;
+}
+
+export async function downloadArchiveLogs(sandboxId: string, tenant?: string): Promise<void> {
+  const path =
+    tenant != null && tenant.trim() !== ''
+      ? `/api/admin/sandboxes/${encodeURIComponent(sandboxId)}/logs/archive/download?${new URLSearchParams({ tenant: tenant.trim() })}`
+      : `/api/sandboxes/${encodeURIComponent(sandboxId)}/logs/archive/download`;
+
+  const res = await fetch(path, { credentials: 'include' });
+  if (res.status === 401) {
+    onUnauthorized?.();
+    throw new ApiError('UNAUTHORIZED', 'Session required', 401);
+  }
+  if (!res.ok) {
+    const body = await parseBody(res);
+    const err = extractError(body, res.statusText);
+    throw new ApiError(err.code, err.message, res.status);
+  }
+  const blob = await res.blob();
+  const filename = filenameFromContentDisposition(
+    res.headers.get('Content-Disposition'),
+    `${sandboxId}-archive.log`,
+  );
+  downloadBlob(blob, filename);
+}
+
 export const authApi = {
   me: () => apiRequest<SessionUser>('/api/auth/me'),
   loginTenant: (apiKey: string) =>

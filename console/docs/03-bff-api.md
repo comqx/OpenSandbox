@@ -45,7 +45,8 @@ Proxies Lifecycle; responses include BFF **`runtimeSummary`**.
 | POST | `/api/sandboxes/{id}/snapshots` | same (202) |
 | GET | `/api/sandboxes/{id}/diagnostics/logs` | query `scope` required |
 | GET | `/api/sandboxes/{id}/diagnostics/events` | same |
-| GET | `/api/sandboxes/{id}/logs/archive` | optional OSS archive |
+| GET | `/api/sandboxes/{id}/logs/archive` | optional OSS archive (inline preview, may truncate) |
+| GET | `/api/sandboxes/{id}/logs/archive/download` | full OSS archive file attachment |
 | GET | `/api/sandboxes/{id}/endpoints/{port}` | same |
 | GET | `/api/sandboxes/{id}/monitor` | Grafana embed URL |
 | WS | `/api/sandboxes/{id}/shell/ws` | resolves endpoint `44772`, then bridges execd `POST /pty` and `GET /pty/{sessionId}/ws` |

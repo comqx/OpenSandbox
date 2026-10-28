@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { DownloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Space, Typography, message } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 
-import { adminApi, sandboxApi } from '../api/client';
+import { adminApi, downloadArchiveLogs, sandboxApi } from '../api/client';
 import type { DiagnosticContentResponse } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { SandboxColoredLogViewer } from './SandboxColoredLogViewer';
@@ -36,9 +37,11 @@ export function SandboxArchiveLogPanel({
   const { user } = useAuth();
   const [data, setData] = useState<DiagnosticContentResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [viewerEpoch, setViewerEpoch] = useState(0);
   const [disabledNote, setDisabledNote] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
-  const fetchArchive = useCallback(async () => {
+  const fetchArchive = useCallback(async (options?: { pinTail?: boolean }) => {
     if (!sandboxId.trim()) return;
     if (user?.role === 'admin' && !tenant) {
       message.warning('Admin 查看归档日志需指定 tenant');
@@ -52,6 +55,9 @@ export function SandboxArchiveLogPanel({
           ? await adminApi.archiveLogs(sandboxId.trim(), tenant)
           : await sandboxApi.archiveLogs(sandboxId.trim());
       setData(result);
+      if (options?.pinTail ?? true) {
+        setViewerEpoch((epoch) => epoch + 1);
+      }
     } catch (e) {
       setData(null);
       const msg = e instanceof Error ? e.message : '加载归档失败';
@@ -65,8 +71,28 @@ export function SandboxArchiveLogPanel({
     }
   }, [sandboxId, tenant, user?.role]);
 
+  const handleDownload = useCallback(async () => {
+    if (!sandboxId.trim()) return;
+    if (user?.role === 'admin' && !tenant) {
+      message.warning('Admin 下载归档日志需指定 tenant');
+      return;
+    }
+    setDownloading(true);
+    try {
+      await downloadArchiveLogs(
+        sandboxId.trim(),
+        user?.role === 'admin' && tenant ? tenant : undefined,
+      );
+      message.success('已开始下载归档日志');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '下载归档失败');
+    } finally {
+      setDownloading(false);
+    }
+  }, [sandboxId, tenant, user?.role]);
+
   useEffect(() => {
-    if (autoLoad && sandboxId) void fetchArchive();
+    if (autoLoad && sandboxId) void fetchArchive({ pinTail: true });
   }, [autoLoad, sandboxId, fetchArchive]);
 
   if (disabledNote) {
@@ -90,8 +116,12 @@ export function SandboxArchiveLogPanel({
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" loading={loading} onClick={() => void fetchArchive()}>
+        <Button type="primary" loading={loading} onClick={() => void fetchArchive({ pinTail: true })}>
           刷新归档
+        </Button>
+        <Button icon={<DownloadOutlined />} loading={downloading} onClick={() => void handleDownload()}>
+          下载归档
+          {data?.archive?.objectSizeBytes != null ? ` (${data.archive.objectSizeBytes} bytes)` : ''}
         </Button>
         {data?.archive?.objectKey && (
           <Typography.Text type="secondary" copyable={{ text: data.archive.objectKey }}>
@@ -107,7 +137,7 @@ export function SandboxArchiveLogPanel({
           type="warning"
           showIcon
           style={{ marginBottom: 8 }}
-          message="内容已按 maxBytes 截断，请在 OSS 下载完整对象"
+          message="内容已按 maxBytes 截断，请使用「下载归档」获取完整对象"
         />
       )}
       {!data && !loading && (
@@ -117,7 +147,7 @@ export function SandboxArchiveLogPanel({
         <SandboxColoredLogViewer
           content={data.content}
           maxHeight={maxHeight}
-          contentKey={`archive-${data.content.length}-${loading ? 'loading' : 'idle'}`}
+          contentKey={`archive-${viewerEpoch}`}
         />
       )}
     </div>
