@@ -127,6 +127,26 @@ func TestFilesystemControllerSearchFiles(t *testing.T) {
 	require.Equal(t, "file", files[0].Type)
 }
 
+func TestFilesystemControllerSearchFilesRejectsInvalidPattern(t *testing.T) {
+	populated := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(populated, "alpha.txt"), []byte("alpha"), 0o644))
+
+	for name, dir := range map[string]string{"populated": populated, "empty": t.TempDir()} {
+		t.Run(name, func(t *testing.T) {
+			rawURL := fmt.Sprintf("/files/search?path=%s&pattern=%s", url.QueryEscape(dir), url.QueryEscape("["))
+			ctrl, rec := newFilesystemController(t, http.MethodGet, rawURL, nil)
+
+			ctrl.SearchFiles()
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			var resp model.ErrorResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Equal(t, model.ErrorCodeInvalidRequest, resp.Code)
+			require.Equal(t, "invalid pattern [", resp.Message)
+		})
+	}
+}
+
 func TestFilesystemControllerSearchFilesHidesUploadStaging(t *testing.T) {
 	tmpDir := t.TempDir()
 	visible := filepath.Join(tmpDir, "visible.txt")
@@ -535,6 +555,11 @@ func TestFormatContentDisposition(t *testing.T) {
 			name:     "Backslash in filename",
 			filename: `a\b.txt`,
 			want:     "attachment; filename=\"a%5Cb.txt\"; filename*=UTF-8''a%5Cb.txt",
+		},
+		{
+			name:     "CRLF in filename",
+			filename: "ok\r\nSet-Cookie: x",
+			want:     "attachment; filename=\"ok%0D%0ASet-Cookie%3A%20x\"; filename*=UTF-8''ok%0D%0ASet-Cookie%3A%20x",
 		},
 	}
 

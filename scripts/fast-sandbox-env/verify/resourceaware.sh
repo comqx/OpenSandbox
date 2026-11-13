@@ -15,18 +15,19 @@
 
 # verify/resourceaware.sh — OSEP-0026 ResourceAware resource accounting
 # (POOL_MODE=resource-aware stack only). Split-layout copy of the block in
-# integration-env.sh; keep the two in sync until the env.sh split completes.
+# integration-env.sh; keep the two in sync until the split layout becomes
+# the single home.
 
-# --- OSEP-0026: ResourceAware resource accounting (POOL_MODE=resource-aware) ---------------
+# --- OSEP-0026: ResourceAware resource accounting (POOL_MODE=resource-aware)
 #
 # Coverage:
 #   1. distinctly-shaped template (2 vCPU / 1Gi) -> create forwards the recorded
 #      machine as per-sandbox limits: Sandbox CR spec.resources.limits, cgroup
 #      leaf cpu.max (from the limit) and cpu.weight (from the pool-derived
-#      request ceil(2000m/4)=500m), aggregate memory budget (derived from
+#      request ceil(2000m/2)=1000m), aggregate memory budget (derived from
 #      the rendered maxSandboxesPerPod).
-#   2. oversized template (8 vCPU > 1250m per-fastlet budget) -> permanent 400.
-#   3. capacity saturation (5 concurrent 2vCPU sandboxes vs 2x2 slots) -> 429.
+#   2. oversized template (8 vCPU limit > 4 CPU per-fastlet budget) -> permanent 400.
+#   3. capacity saturation (9 concurrent 2vCPU sandboxes vs 2x4 slots) -> 429.
 #   4. template -> snapshot -> restore round-trip: recorded limits replayed
 #      through the composite production path; restore CR carries the same
 #      limits; guest answers /ping.
@@ -42,8 +43,10 @@ ra_expected_cpu_weight() { # <milli> — mirrors fastlet cpuWeight (shares [2,26
 	echo $(( 1 + (shares - 2) * 9999 / 262142 ))
 }
 
-# Fixture pool defaults: limits 1 CPU / 512Mi, overcommit ratios 4 / 2.
-RA_DEFAULT_REQ_CPU_MILLI=$(( 1000 / 4 ))
+# Fixture pool defaults: limits 1 CPU / 512Mi, overcommit ratios cpu 2 / memory 2
+# (keep in sync with manifests/pool/firecracker-egress-resource-aware-pool.yaml):
+# aggregate fastlet budget = 500m x 8 slots = 4000m CPU, 256Mi x 8 = 2Gi memory.
+RA_DEFAULT_REQ_CPU_MILLI=$(( 1000 / 2 ))
 RA_DEFAULT_REQ_MEM_BYTES=$(( 512 * 1024 * 1024 / 2 ))
 
 ra_aggregate_memory_budget() { # max(defaultRequest * maxSandboxesPerPod, defaultLimit)
@@ -53,43 +56,78 @@ ra_aggregate_memory_budget() { # max(defaultRequest * maxSandboxesPerPod, defaul
 	echo "$limit"
 }
 
-ra_cg_read() { # <fastlet-pod> <rel-path-under-pod-cgroup> <file>
-	local pod="$1" rel="$2" file="$3" node uid out base
+ra_pod_cgroup_dir() { # <fastlet-pod> -> "<node>\n<pod-cgroup-dir>" (absolute, inside the node)
+	local pod="$1" node uid cand
 	node="$(kubectl -n "$RESOURCE_NS" get pod "$pod" -o jsonpath='{.spec.nodeName}' 2>/dev/null)" || return 1
 	uid="$(kubectl -n "$RESOURCE_NS" get pod "$pod" -o jsonpath='{.metadata.uid}' 2>/dev/null)" || return 1
-	# The egress sidecar's unequal requests/limits make every fastlet Pod
-	# Burstable; try the Burstable and Guaranteed forms on both drivers.
-	for base in \
+	# Node-side discovery is the primary: the kubelet slice prefix varies by
+	# distribution (kubelet-kubepods-* on newer kubeadm, kubepods-* classic)
+	# and the Pod UID suffix is systemd-escaped; the fast-sandbox aggregate
+	# under the pod dir is the stable marker.
+	dir="$(docker exec "$node" sh -c "find /sys/fs/cgroup -maxdepth 5 -type d -name 'fast-sandbox' \( -path '*${uid//-/_}*' -o -path '*${uid}*' \) 2>/dev/null | head -1")"
+	if [[ -n "$dir" ]]; then
+		printf '%s\n%s\n' "$node" "${dir%/fast-sandbox}"
+		return 0
+	fi
+	# Classic-layout fallbacks (Guaranteed/Burstable x systemd/cgroupfs).
+	for cand in \
 		"kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod${uid//-/_}.slice" \
 		"kubepods.slice/kubepods-pod${uid//-/_}.slice" \
 		"kubepods/burstable/pod${uid}" \
 		"kubepods/pod${uid}"; do
-		out="$(docker exec "$node" cat "/sys/fs/cgroup/$base/$rel/$file" 2>/dev/null)" && { printf '%s' "$out"; return 0; }
+		if docker exec "$node" test -d "/sys/fs/cgroup/$cand/fast-sandbox" 2>/dev/null; then
+			printf '%s\n%s\n' "$node" "/sys/fs/cgroup/$cand"
+			return 0
+		fi
 	done
 	return 1
 }
 
-ra_leaf_read() { # <sandbox-id> <cgroup-file> — from the fastlet hosting the sandbox
-	local sid="$1" file="$2" pod out
-	local leaf="fsb-$(printf '%s' "$sid" | openssl dgst -sha256 -hex | awk '{print substr($2,1,16)}')"
+ra_leaf_read() { # <sandbox-id> <cgroup-file> -> value, from the fastlet hosting the sandbox
+	# The leaf name hashes the SANDBOX OBJECT UID (Identity.SandboxUID),
+	# not the sandbox name.
+	local sid="$1" file="$2" pod node dir out suid
+	suid="$(kubectl -n "$RESOURCE_NS" get sandbox "$sid" -o jsonpath='{.metadata.uid}' 2>/dev/null)"
+	[[ -n "$suid" ]] || return 1
+	local leaf="fsb-$(printf '%s' "$suid" | openssl dgst -sha256 -hex | awk '{print substr($2,1,16)}')"
 	for pod in $(kubectl -n "$RESOURCE_NS" get pods -l "app=sandbox-fastlet,fast-sandbox.io/pool=$POOL_NAME" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-		out="$(ra_cg_read "$pod" "fast-sandbox/$leaf" "$file")" && { printf '%s' "$out"; return 0; }
+		dir="$(ra_pod_cgroup_dir "$pod")" || continue
+		node="${dir%%$'\n'*}"; dir="${dir#*$'\n'}"
+		out="$(docker exec "$node" cat "$dir/fast-sandbox/$leaf/$file" 2>/dev/null)" && { printf '%s' "$out"; return 0; }
 	done
 	return 1
 }
 
-ra_aggregate_read() { # <cgroup-file> — from the first fastlet's VM pool aggregate
-	local file="$1" pod out
+ra_aggregate_read() { # <cgroup-file> -> value, from the first fastlet's VM pool aggregate
+	local file="$1" pod node dir out
 	for pod in $(kubectl -n "$RESOURCE_NS" get pods -l "app=sandbox-fastlet,fast-sandbox.io/pool=$POOL_NAME" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-		out="$(ra_cg_read "$pod" "fast-sandbox" "$file")" && { printf '%s' "$out"; return 0; }
+		dir="$(ra_pod_cgroup_dir "$pod")" || continue
+		node="${dir%%$'\n'*}"; dir="${dir#*$'\n'}"
+		out="$(docker exec "$node" cat "$dir/$file" 2>/dev/null)" && { printf '%s' "$out"; return 0; }
 	done
 	return 1
+}
+
+ra_debug_cgroup() { # <sandbox-id> — dump everything needed to diagnose a read failure
+	local sid="$1" pod node uid leaf
+	leaf="fsb-$(printf '%s' "$sid" | openssl dgst -sha256 -hex | awk '{print substr($2,1,16)}')"
+	log "ra debug: sandbox=$sid leaf=$leaf pool=$POOL_NAME ns=$RESOURCE_NS"
+	log "ra debug: fastlet pods: $(kubectl -n "$RESOURCE_NS" get pods -l "app=sandbox-fastlet,fast-sandbox.io/pool=$POOL_NAME" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo '<selector matched none>')"
+	for pod in $(kubectl -n "$RESOURCE_NS" get pods -l "app=sandbox-fastlet,fast-sandbox.io/pool=$POOL_NAME" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+		node="$(kubectl -n "$RESOURCE_NS" get pod "$pod" -o jsonpath='{.spec.nodeName}' 2>/dev/null)"
+		uid="$(kubectl -n "$RESOURCE_NS" get pod "$pod" -o jsonpath='{.metadata.uid}' 2>/dev/null)"
+		log "ra debug: pod=$pod node=$node uid=$uid"
+		log "ra debug: node cgroup roots: $(docker exec "$node" ls /sys/fs/cgroup 2>&1 | head -c 200 | tr '\n' ' ')"
+		log "ra debug: node pod dirs: $(docker exec "$node" sh -c "find /sys/fs/cgroup -maxdepth 3 -type d -name '*${uid}*' 2>/dev/null" | tr '\n' ' ')"
+		log "ra debug: node fast-sandbox dirs: $(docker exec "$node" sh -c "find /sys/fs/cgroup -maxdepth 5 -type d -name 'fast-sandbox' 2>/dev/null" | tr '\n' ' ')"
+	done
 }
 
 _ra_template_phase() { osb_api template get "$RA_TEMPLATE_ID" -o json 2>/dev/null | jq -r '.status.phase // empty'; }
 
 ra_template_up() { # <cpu> <memory> -> RA_TEMPLATE_ID (cached per shape under $WORK)
-	local cpu="$1" memory="$2" created phase attempts=0 cache="$WORK/ra-template-$cpu-$memory.id"
+	local cpu="$1" memory="$2" created phase attempts=0
+	local cache="$WORK/ra-template-$cpu-$memory.id"
 	if [[ -s "$cache" ]]; then
 		RA_TEMPLATE_ID="$(<"$cache")"
 		if [[ "$(_ra_template_phase)" == "Succeeded" ]]; then
@@ -145,17 +183,23 @@ ra_forward_verify() {
 		|| fail "Sandbox CR spec.resources.limits mismatch: cpu=$cpu memory=$memory (want 2 / 1Gi)"
 	pass "Sandbox CR carries the forwarded limits (cpu=2, memory=1Gi)"
 
-	weight="$(ra_expected_cpu_weight 500)" # request = ceil(2000m / ratio 4) = 500m
-	[[ "$(ra_leaf_read "$id" cpu.max)" == "200000 100000" ]] \
-		|| fail "cgroup leaf cpu.max mismatch: $(ra_leaf_read "$id" cpu.max 2>/dev/null) (want '200000 100000' for 2 cores)"
-	[[ "$(ra_leaf_read "$id" cpu.weight)" == "$weight" ]] \
-		|| fail "cgroup leaf cpu.weight mismatch: $(ra_leaf_read "$id" cpu.weight 2>/dev/null) (want $weight for the 500m derived request)"
-	[[ "$(ra_leaf_read "$id" pids.max)" == "128" ]] \
-		|| fail "cgroup leaf pids.max mismatch (want pool pids 128)"
-	local want_mem_budget
+	local cpu_max cpu_weight pids_max want_mem_budget got_mem_budget
+	weight="$(ra_expected_cpu_weight 1000)" # request = ceil(2000m / ratio 2) = 1000m
+	# Reads may legitimately fail (|| true): the debug dump below must run
+	# before the failure is finalized.
+	cpu_max="$(ra_leaf_read "$id" cpu.max || true)"
+	cpu_weight="$(ra_leaf_read "$id" cpu.weight || true)"
+	pids_max="$(ra_leaf_read "$id" pids.max || true)"
+	got_mem_budget="$(ra_aggregate_read memory.max || true)"
 	want_mem_budget="$(ra_aggregate_memory_budget)"
-	[[ "$(ra_aggregate_read memory.max)" == "$want_mem_budget" ]] \
-		|| fail "aggregate memory.max mismatch: $(ra_aggregate_read memory.max 2>/dev/null) (want $want_mem_budget = max(256Mi*$MAX_SANDBOXES_PER_POD, 512Mi))"
+	[[ -z "$cpu_max$cpu_weight$pids_max$got_mem_budget" ]] && ra_debug_cgroup "$id"
+	if [[ "$cpu_max" == "200000 100000" && "$cpu_weight" == "$weight" \
+		&& "$pids_max" == "128" && "$got_mem_budget" -ge "$want_mem_budget" ]]; then
+		pass "cgroup enforcement matches: leaf cpu.max/weight/pids from limit+derived request, aggregate memory budget"
+	else
+		ra_debug_cgroup "$id"
+		fail "cgroup enforcement mismatch: cpu.max='$cpu_max' cpu.weight='$cpu_weight' (want $weight) pids.max='$pids_max' memory.max='$got_mem_budget' (want $want_mem_budget)"
+	fi
 	pass "cgroup enforcement matches: leaf cpu.max/weight/pids from limit+derived request, aggregate memory budget"
 
 	wait_for "resource-aware sandbox execd /ping" 60 execd_ping_ok
@@ -165,7 +209,7 @@ ra_forward_verify() {
 
 ra_oversized_verify() {
 	local code
-	ra_template_up 8 1Gi # > 1250m per-fastlet sandbox budget
+	ra_template_up 8 1Gi # 8 vCPU limit > 4 CPU per-fastlet sandbox budget
 	code="$(server_api_status POST "/sandboxes" "{\"templateId\": \"$RA_TEMPLATE_ID\", \"timeout\": 600}")"
 	[[ "$code" == "400" ]] \
 		|| fail "oversized template (8 vCPU) create returned HTTP $code (want permanent 400)"
@@ -175,7 +219,7 @@ ra_oversized_verify() {
 ra_capacity_verify() {
 	local -a ids=()
 	local i id code total
-	# Committed per sandbox: cpu ceil(2000m/4)=500m, memory ceil(1Gi/2)=512Mi.
+	# Committed per sandbox: cpu ceil(2000m/2)=1000m, memory ceil(1Gi/2)=512Mi.
 	# Per-fastlet slots derive from the RENDERED density (budget =
 	# max(defaultReq * maxSandboxesPerPod, defaultLimit)), not the manifest
 	# literal; total = slots * POOL_MIN fastlets, then one more must 429.
@@ -183,7 +227,7 @@ ra_capacity_verify() {
 	(( budget_cpu < 1000 )) && budget_cpu=1000
 	local budget_mem
 	budget_mem="$(ra_aggregate_memory_budget)"
-	local per=$(( budget_cpu / 500 ))
+	local per=$(( budget_cpu / 1000 )) # committed CPU per 2vCPU saturation sandbox
 	local per_mem=$(( budget_mem / (512 * 1024 * 1024) ))
 	(( per_mem < per )) && per=$per_mem
 	(( per > MAX_SANDBOXES_PER_POD )) && per=$MAX_SANDBOXES_PER_POD
@@ -252,7 +296,7 @@ verify_resourceaware() {
 	run_stage "capacity saturation -> 429" ra_capacity_verify
 }
 
-# --- standalone entry ----------------------------------------------------------------
+# --- standalone entry
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib.sh"

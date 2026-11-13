@@ -282,7 +282,7 @@ osb command logs <sandbox-id> <execution-id> -o json
 
 Background start errors or a stream ending before startup confirmation make the CLI exit non-zero without success metadata. After a successful start, use `command status` and `command logs` to check the process's eventual result.
 
-By default the payload after `--` is joined into one shell command string, so pipelines, redirection, and `$VAR` expansion work as in a terminal. Add `--argv` to pass the arguments to the executable as a literal argv list (no shell) when values such as `$HOME`, quotes, embedded spaces, or empty strings must reach the process unchanged. `--argv` needs a sandbox image whose execd accepts argv requests:
+By default each payload word after `--` is quoted as a single shell token and the tokens are joined into one shell command line that the sandbox's shell runs. Shell syntax such as pipelines or redirection must therefore ride inside an explicit word (`-- sh -c 'echo hi > /tmp/x'`); an unquoted `$VAR` is expanded by your own terminal before the CLI sees it, while a quoted one reaches the sandbox shell literally. Add `--argv` to pass the arguments to the executable as a literal argv list (no shell) when values such as `$HOME`, quotes, embedded spaces, or empty strings must reach the process unchanged. `--argv` needs a sandbox image whose execd accepts argv requests:
 
 ```bash
 osb command run <sandbox-id> -o raw --argv -- python3 -c "import sys; print(sys.argv[1:])" "a b" '$HOME' "x'y" ""
@@ -383,12 +383,7 @@ temporary URL. Structured CLI output follows the SDK/Python field style, for
 example `content_url`, `content_length`, and `expires_at`. Older server builds
 may still return `DIAGNOSTICS_NOT_IMPLEMENTED` for scoped diagnostics.
 
-Legacy DevOps diagnostics remain experimental. Prefer `osb diagnostics logs/events` for stable API-backed log and event collection.
-
-```bash
-osb devops inspect <sandbox-id> -o raw
-osb devops summary <sandbox-id> -o raw
-```
+The legacy `osb devops` command group was removed. Use `osb diagnostics logs/events` with `--scope` for log and event collection and `osb sandbox get` for sandbox state. The plain-text filters (`--tail`, `--since`, `--limit`) have no stable equivalents.
 
 ## Output Formats
 
@@ -421,7 +416,6 @@ The main command groups are:
 - `osb file`: file and directory operations
 - `osb egress`: runtime egress policy
 - `osb diagnostics`: stable diagnostics logs and events
-- `osb devops`: experimental legacy diagnostics
 - `osb config`: local CLI configuration
 - `osb skills`: bundled skills for AI tools
 
